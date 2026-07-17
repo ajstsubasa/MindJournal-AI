@@ -13,12 +13,16 @@
       "supportsTablet": true,
       "bundleIdentifier": "com.mindjournalai.app",
       "infoPlist": {
-        "NSSpeechRecognitionUsageDescription": "MindJournal AI uses speech recognition to turn a Quick Entry into a private journal note.",
-        "NSMicrophoneUsageDescription": "MindJournal AI uses your microphone only while you create a Quick Entry."
+        "NSSpeechRecognitionUsageDescription": "Allow MindJournal AI to turn Quick Entries into text.",
+        "NSMicrophoneUsageDescription": "Allow MindJournal AI to use the microphone for Quick Entries.",
+        "ITSAppUsesNonExemptEncryption": false
       }
     },
     "android": {
-      "package": "com.mindjournalai.app"
+      "package": "com.mindjournalai.app",
+      "permissions": [
+        "android.permission.RECORD_AUDIO"
+      ]
     },
     "plugins": [
       [
@@ -26,12 +30,20 @@
         {
           "microphonePermission": "Allow MindJournal AI to use the microphone for Quick Entries.",
           "speechRecognitionPermission": "Allow MindJournal AI to turn Quick Entries into text.",
-          "androidSpeechServicePackages": ["com.google.android.googlequicksearchbox", "com.google.android.as"]
+          "androidSpeechServicePackages": [
+            "com.google.android.googlequicksearchbox",
+            "com.google.android.as"
+          ]
         }
       ]
     ],
     "web": {
       "bundler": "metro"
+    },
+    "extra": {
+      "eas": {
+        "projectId": "e3df15c5-d73e-4bec-a4a6-a59c97cbabe0"
+      }
     }
   }
 }
