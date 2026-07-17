@@ -1,0 +1,37 @@
+{
+  "expo": {
+    "name": "MindJournal AI",
+    "slug": "mindjournal-ai",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "splash": {
+      "resizeMode": "contain",
+      "backgroundColor": "#F6F4FF"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.mindjournalai.app",
+      "infoPlist": {
+        "NSSpeechRecognitionUsageDescription": "MindJournal AI uses speech recognition to turn a Quick Entry into a private journal note.",
+        "NSMicrophoneUsageDescription": "MindJournal AI uses your microphone only while you create a Quick Entry."
+      }
+    },
+    "android": {
+      "package": "com.mindjournalai.app"
+    },
+    "plugins": [
+      [
+        "expo-speech-recognition",
+        {
+          "microphonePermission": "Allow MindJournal AI to use the microphone for Quick Entries.",
+          "speechRecognitionPermission": "Allow MindJournal AI to turn Quick Entries into text.",
+          "androidSpeechServicePackages": ["com.google.android.googlequicksearchbox", "com.google.android.as"]
+        }
+      ]
+    ],
+    "web": {
+      "bundler": "metro"
+    }
+  }
+}
