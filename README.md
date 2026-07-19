@@ -1,4 +1,4 @@
-# MindJournal AI
+# Reflect AI
 
 A calm, local-first mobile journaling starter built with Expo and React Native.
 

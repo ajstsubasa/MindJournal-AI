@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "MindJournal AI",
+    "name": "Reflect AI",
     "slug": "mindjournal-ai",
     "version": "0.1.0",
     "orientation": "portrait",
@@ -13,8 +13,8 @@
       "supportsTablet": true,
       "bundleIdentifier": "com.mindjournalai.app",
       "infoPlist": {
-        "NSSpeechRecognitionUsageDescription": "Allow MindJournal AI to turn Quick Entries into text.",
-        "NSMicrophoneUsageDescription": "Allow MindJournal AI to use the microphone for Quick Entries.",
+        "NSSpeechRecognitionUsageDescription": "Allow Reflect AI to turn your spoken reflections into text.",
+        "NSMicrophoneUsageDescription": "Allow Reflect AI to use the microphone for voice reflections.",
         "ITSAppUsesNonExemptEncryption": false
       }
     },
@@ -26,10 +26,17 @@
     },
     "plugins": [
       [
+        "expo-image-picker",
+        {
+          "photosPermission": "Allow Reflect AI to attach a photo to a private journal entry.",
+          "microphonePermission": false
+        }
+      ],
+      [
         "expo-speech-recognition",
         {
-          "microphonePermission": "Allow MindJournal AI to use the microphone for Quick Entries.",
-          "speechRecognitionPermission": "Allow MindJournal AI to turn Quick Entries into text.",
+          "microphonePermission": "Allow Reflect AI to use the microphone for voice reflections.",
+          "speechRecognitionPermission": "Allow Reflect AI to turn spoken reflections into text.",
           "androidSpeechServicePackages": [
             "com.google.android.googlequicksearchbox",
             "com.google.android.as"
