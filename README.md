@@ -17,14 +17,28 @@ Every single line of code was written by Codex and ChatGPT5.6. Design of the app
 
 Entries are stored separately in the device's protected secure storage. To stay within secure-storage limits across iOS and Android, each entry is capped at 1,500 characters. AI features need explicit user consent.
 
-## Run it
+## Run it locally
 
-From this folder, install dependencies and start Expo:
+1. Install Node.js (LTS) and the Expo Go app on an iPhone or Android device.
+2. Clone the repository:
+   git clone https://github.com/ajstsubasa/MindJournal-AI.git
+3. Open the project:
+   cd MindJournal-AI
+4. Install dependencies:
+   npm ci
+5. Start the app:
+   npx expo start --tunnel
+6. Scan the QR code using Expo Go.
 
-```powershell
-npm install
-npx expo install expo-secure-store expo-file-system expo-sharing
-npm start
-```
+## Suggested demo flow
 
-Then open the project in Expo Go on a phone, or press `a` / `i` in the Expo terminal for an Android/iOS simulator.
+- Tap **+** to create a reflection.
+- Choose or customize a mood and its calendar color.
+- Add a written reflection, energy level, sleep rating, and optional photo.
+- Open **Calendar** to revisit entries by date.
+- Open the top-left menu to view:
+  - Mood trends
+  - Your streak
+  - Feelings & colors
+  - Appearance themes
+  - Export controls
