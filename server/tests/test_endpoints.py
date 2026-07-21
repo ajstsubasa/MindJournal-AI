@@ -25,6 +25,23 @@ def test_summarize_requires_data(client):
     assert response.status_code == 422
 
 
+def test_weekly_summary_returns_structured_reflection(unauthenticated_client):
+    response = unauthenticated_client.post(
+        "/weekly-summary",
+        json={
+            "week_ending": "2026-07-20",
+            "entries": [
+                {"date": "2026-07-18", "content": "A gentle walk helped.", "mood": "Good", "energy": 6, "sleep": "Good"}
+            ],
+        },
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert isinstance(body["overview"], str)
+    assert isinstance(body["patterns"], list)
+    assert isinstance(body["gentle_next_steps"], list)
+
+
 def test_concepts_returns_three_concepts(client):
     response = client.post("/concepts", json={"data": "I keep overthinking an argument"})
     assert response.status_code == 200

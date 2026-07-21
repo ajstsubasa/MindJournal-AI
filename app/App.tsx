@@ -27,6 +27,7 @@ type Screen = 'home' | 'calendar' | 'entry' | 'trends' | 'moods' | 'streak';
 type TrendRange = 'seven' | 'thirty' | 'sixMonths';
 type AppThemeName = 'ocean' | 'forest' | 'rose' | 'midnight';
 type AppTheme = { accent: string; background: string; dark: boolean; name: string; nav: string; primary: string; text: string };
+type WeeklyAISummary = { affirmation: string; gentle_next_steps: string[]; overview: string; patterns: string[]; support_note: string | null };
 
 let speechRecognition: typeof import('expo-speech-recognition') | null = null;
 try {
@@ -129,6 +130,8 @@ const weekDays = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const MAX_ENTRY_LENGTH = 1500;
 const THEME_KEY = 'mindjournal.app-theme.v1';
 const MOODS_KEY = 'mindjournal.moods.v1';
+const WEEKLY_SUMMARY_ENDPOINT = 'https://mindjournal.languidlabs.com/weekly-summary';
+const WEEKLY_SUMMARY_CONFIRMATION = 'generate weekly ai summary';
 const sleepOptions = [
   { label: 'Good', value: '8' },
   { label: 'Medium', value: '6' },
@@ -274,6 +277,10 @@ export default function App() {
   const [moods, setMoods] = useState<Mood[]>(defaultMoods);
   const [newMoodLabel, setNewMoodLabel] = useState('');
   const [newMoodColor, setNewMoodColor] = useState(moodColors[6]);
+  const [weeklySummaryCommand, setWeeklySummaryCommand] = useState('');
+  const [weeklySummary, setWeeklySummary] = useState<WeeklyAISummary | null>(null);
+  const [weeklySummaryError, setWeeklySummaryError] = useState<string | null>(null);
+  const [weeklySummaryLoading, setWeeklySummaryLoading] = useState(false);
   const [quickTranscript, setQuickTranscript] = useState('');
   const [quickError, setQuickError] = useState<string | null>(null);
   const [quickListening, setQuickListening] = useState(false);
@@ -303,6 +310,22 @@ export default function App() {
     () => Object.values(entries).flat().sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)),
     [entries],
   );
+  const weeklyEntries = useMemo(() => {
+    const firstDate = new Date(`${todayKey}T12:00:00`);
+    firstDate.setDate(firstDate.getDate() - 6);
+    const firstKey = dateKey(firstDate);
+    return Object.values(entries).flat()
+      .filter((entry) => entry.date >= firstKey && entry.date <= todayKey)
+      .sort((a, b) => a.date.localeCompare(b.date) || a.createdAt.localeCompare(b.createdAt))
+      .slice(-30)
+      .map((entry) => ({
+        content: entry.content,
+        date: entry.date,
+        energy: entry.energy,
+        mood: entry.mood ? moodByValue[entry.mood]?.label ?? null : null,
+        sleep: sleepSummary(entry.sleepHours),
+      }));
+  }, [entries, moodByValue, todayKey]);
   const streakStats = useMemo(() => {
     const checkInDates = new Set(Object.entries(entries).filter(([, dayEntries]) => dayEntries.length > 0).map(([date]) => date));
     let current = 0;
@@ -704,6 +727,102 @@ export default function App() {
     }
   }
 
+  async function generateWeeklySummary() {
+    if (weeklySummaryCommand.trim().toLowerCase() !== WEEKLY_SUMMARY_CONFIRMATION) return;
+    if (!weeklyEntries.length) {
+      setWeeklySummaryError('Save at least one reflection from the past seven days before generating a summary.');
+      return;
+    }
+    try {
+      setWeeklySummaryLoading(true);
+      setWeeklySummaryError(null);
+      const response = await fetch(WEEKLY_SUMMARY_ENDPOINT, {
+        body: JSON.stringify({ entries: weeklyEntries, week_ending: todayKey }),
+        headers: { 'Content-Type': 'application/json' },
+        method: 'POST',
+      });
+      if (!response.ok) {
+        const detail = await response.json().catch(() => null) as { detail?: string } | null;
+        throw new Error(detail?.detail ?? `The summary service returned ${response.status}.`);
+      }
+      setWeeklySummary(await response.json() as WeeklyAISummary);
+    } catch (error) {
+      setWeeklySummaryError(error instanceof Error ? error.message : 'The weekly summary could not be generated. Please try again.');
+    } finally {
+      setWeeklySummaryLoading(false);
+    }
+  }
+
+  function buildDemoEntries() {
+    const reflections = [
+      'Demo check-in: Took a short walk and felt a little more settled afterward.',
+      'Demo check-in: Work felt busy today, so I paused for a few slow breaths.',
+      'Demo check-in: I reached out to someone I trust and felt supported.',
+      'Demo check-in: I felt tired, but finishing one small task gave me momentum.',
+      'Demo check-in: I noticed a calm moment while listening to music.',
+      'Demo check-in: My thoughts were racing, so I wrote down what I could control.',
+    ];
+    const now = new Date();
+    const seed = Date.now();
+    return Array.from({ length: 30 }, (_, index): JournalEntry => {
+      const date = new Date(now);
+      date.setDate(date.getDate() - (29 - index));
+      const mood = moods[(index * 3 + 1) % moods.length];
+      const createdAt = new Date(date.getFullYear(), date.getMonth(), date.getDate(), 9 + (index % 8), index % 50).toISOString();
+      return {
+        content: reflections[(index * 5 + 2) % reflections.length],
+        createdAt,
+        date: dateKey(date),
+        energy: 3 + ((index * 7) % 7),
+        id: `demo-${seed}-${index}`,
+        imageUri: null,
+        mood: mood.value,
+        sleepHours: [2, 4, 6, 8][index % 4],
+        updatedAt: createdAt,
+      };
+    });
+  }
+
+  function loadDemoJournal() {
+    Alert.alert('Load 30 days of demo entries?', 'This adds clearly labelled sample entries for testing. It will not overwrite your existing journal.', [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Load demo entries', onPress: async () => {
+        try {
+          const demoEntries = buildDemoEntries();
+          await Promise.all(demoEntries.map((entry) => saveEntry(entry)));
+          setEntries((current) => {
+            const next = { ...current };
+            demoEntries.forEach((entry) => { next[entry.date] = [...(next[entry.date] ?? []), entry]; });
+            return next;
+          });
+          setWeeklySummary(null);
+          setWeeklySummaryCommand('');
+          Alert.alert('Demo journal loaded', 'Thirty sample entries are ready to explore in Trends and Calendar.');
+        } catch {
+          Alert.alert('Could not load demo entries', 'Please try again.');
+        }
+      } },
+    ]);
+  }
+
+  function removeDemoJournal() {
+    const demoEntries = Object.values(entries).flat().filter((entry) => entry.id.startsWith('demo-'));
+    if (!demoEntries.length) return;
+    Alert.alert('Remove demo entries?', 'This removes only the 30 sample entries, not your own journal entries.', [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Remove demo entries', style: 'destructive', onPress: async () => {
+        try {
+          await Promise.all(demoEntries.map((entry) => removeEntry(entry.date, entry.id)));
+          setEntries((current) => Object.fromEntries(Object.entries(current).map(([date, saved]) => [date, saved.filter((entry) => !entry.id.startsWith('demo-'))]).filter(([, saved]) => saved.length)));
+          setWeeklySummary(null);
+          setWeeklySummaryCommand('');
+        } catch {
+          Alert.alert('Could not remove demo entries', 'Please try again.');
+        }
+      } },
+    ]);
+  }
+
   function deleteAll() {
     if (!Object.keys(entries).length) return;
     Alert.alert('Delete all entries?', 'This permanently removes every Reflect AI entry from this device. Consider exporting first.', [
@@ -804,6 +923,19 @@ export default function App() {
               return <View key={mood.value} style={styles.breakdownRow}><View style={[styles.breakdownSwatch, { backgroundColor: mood.color }]} /><Text style={styles.breakdownLabel}>{mood.label}</Text><View style={styles.breakdownTrack}><View style={[styles.breakdownFill, { backgroundColor: mood.color, width: `${percentage}%` }]} /></View><Text style={styles.breakdownValue}>{percentage}%</Text></View>;
             })}
           </> : <View style={styles.emptyState}><Text style={styles.emptyStateTitle}>No check-ins in this period</Text><Text style={styles.emptyStateText}>Save a feeling on the calendar to begin seeing your trends.</Text></View>}
+          <View style={styles.weeklyAiCard}>
+            <Text style={styles.weeklyAiTitle}>Weekly AI reflection</Text>
+            <Text style={styles.weeklyAiText}>When you confirm below, up to {weeklyEntries.length} entries from the past seven days are sent to Reflect AI’s summary service. The service does not retain them. This is not clinical advice.</Text>
+            <TextInput accessibilityLabel="Weekly AI summary confirmation" autoCapitalize="none" onChangeText={setWeeklySummaryCommand} placeholder="Type: Generate weekly AI summary" placeholderTextColor="#7186A7" style={styles.weeklyAiInput} value={weeklySummaryCommand} />
+            <Pressable accessibilityRole="button" disabled={weeklySummaryLoading || weeklySummaryCommand.trim().toLowerCase() !== WEEKLY_SUMMARY_CONFIRMATION} onPress={generateWeeklySummary} style={[styles.weeklyAiButton, { backgroundColor: appTheme.primary }, (weeklySummaryLoading || weeklySummaryCommand.trim().toLowerCase() !== WEEKLY_SUMMARY_CONFIRMATION) && styles.disabledButton]}><Text style={styles.weeklyAiButtonText}>{weeklySummaryLoading ? 'Creating your reflection…' : 'Generate weekly AI summary'}</Text></Pressable>
+            {weeklySummaryError && <Text style={styles.weeklyAiError}>{weeklySummaryError}</Text>}
+            {weeklySummary && <View style={styles.weeklyAiResult}><Text style={styles.weeklyAiResultTitle}>Your week in reflection</Text><Text style={styles.weeklyAiOverview}>{weeklySummary.overview}</Text><Text style={styles.weeklyAiSectionTitle}>Patterns noticed</Text>{weeklySummary.patterns.map((pattern, index) => <Text key={`${pattern}-${index}`} style={styles.weeklyAiBullet}>• {pattern}</Text>)}<Text style={styles.weeklyAiSectionTitle}>Gentle next steps</Text>{weeklySummary.gentle_next_steps.map((step, index) => <Text key={`${step}-${index}`} style={styles.weeklyAiBullet}>• {step}</Text>)}<Text style={styles.weeklyAiAffirmation}>{weeklySummary.affirmation}</Text>{weeklySummary.support_note && <Text style={styles.weeklyAiSupport}>{weeklySummary.support_note}</Text>}</View>}
+          </View>
+          <View style={styles.demoJournalCard}>
+            <Text style={styles.demoJournalTitle}>Hackathon demo journal</Text>
+            <Text style={styles.demoJournalText}>Add 30 clearly labelled sample entries to test trends and the weekly AI reflection. Your existing entries are not overwritten.</Text>
+            <View style={styles.demoJournalActions}><Pressable onPress={loadDemoJournal} style={[styles.demoJournalButton, { backgroundColor: appTheme.accent }]}><Text style={[styles.demoJournalButtonText, { color: appTheme.nav }]}>Load 30-day demo</Text></Pressable>{Object.values(entries).flat().some((entry) => entry.id.startsWith('demo-')) && <Pressable onPress={removeDemoJournal} style={styles.demoRemoveButton}><Text style={styles.demoRemoveText}>Remove demo</Text></Pressable>}</View>
+          </View>
         </ScrollView>
       </SafeAreaView>
     );
@@ -1023,7 +1155,7 @@ const styles = StyleSheet.create({
   title: { color: '#294A82', fontSize: 20, fontWeight: '700', letterSpacing: -0.3 }, subtitle: { color: '#647B9E', fontSize: 14, marginTop: 5 }, calendarHeader: { marginBottom: 13 }, monthControls: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between', marginTop: 12 }, monthButton: { alignItems: 'center', backgroundColor: '#D9E9FF', borderRadius: 15, height: 30, justifyContent: 'center', width: 30 }, monthButtonText: { color: '#31599C', fontSize: 25, lineHeight: 28 }, monthLabel: { color: '#315982', fontSize: 14, fontWeight: '700' }, weekRow: { flexDirection: 'row', marginBottom: 6 }, weekday: { color: '#7186A7', fontSize: 11, fontWeight: '700', textAlign: 'center', width: '14.285%' }, calendarGrid: { flexDirection: 'row', flexWrap: 'wrap', marginBottom: 11 }, dayCell: { alignItems: 'center', borderRadius: 13, height: 42, justifyContent: 'center', marginVertical: 1, width: '14.285%' }, daySelected: { backgroundColor: '#3568B7' }, daySelectedOutline: { borderColor: '#24467C', borderWidth: 2 }, dayFuture: { opacity: 0.3 }, dayNumber: { color: '#405A80', fontSize: 14, fontWeight: '600' }, dayNumberSelected: { color: '#FFFFFF' }, entryDot: { backgroundColor: '#3568B7', borderRadius: 3, bottom: 5, height: 5, position: 'absolute', width: 5 }, selectedDate: { color: '#31599C', fontSize: 13, fontWeight: '700', marginBottom: 25, textAlign: 'center' },
   moodRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 27, marginTop: 15 }, moodButton: { alignItems: 'center', backgroundColor: '#FFFFFF', borderColor: '#D8E3EF', borderRadius: 13, borderWidth: 1, flexDirection: 'row', minHeight: 44, paddingHorizontal: 10, width: '31%' }, moodColor: { borderRadius: 6, height: 12, marginRight: 7, width: 12 }, moodLabel: { color: '#405A80', fontSize: 11, fontWeight: '700', flexShrink: 1 }, energyHeader: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between' }, energyValue: { color: '#3568B7', fontSize: 13, fontWeight: '700' }, energyRow: { flexDirection: 'row', gap: 4, marginBottom: 30, marginTop: 15 }, energyButton: { alignItems: 'center', backgroundColor: '#FFFFFF', borderColor: '#D8E3EF', borderRadius: 8, borderWidth: 1, flex: 1, paddingVertical: 10 }, energyButtonSelected: { backgroundColor: '#3568B7', borderColor: '#3568B7' }, energyButtonText: { color: '#405A80', fontSize: 12, fontWeight: '700' }, energyButtonTextSelected: { color: '#FFFFFF' },
   sleepHeader: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between' }, sleepUnit: { color: '#706C7D', fontSize: 13 }, sleepOptions: { flexDirection: 'row', gap: 7, marginBottom: 28, marginTop: 11 }, sleepOption: { alignItems: 'center', backgroundColor: '#FFFFFF', borderColor: '#D8E3EF', borderRadius: 10, borderWidth: 1, flex: 1, paddingHorizontal: 4, paddingVertical: 11 }, sleepOptionSelected: { backgroundColor: '#3568B7', borderColor: '#3568B7' }, sleepOptionText: { color: '#52667F', fontSize: 11, fontWeight: '800' }, sleepOptionTextSelected: { color: '#FFFFFF' }, trendChart: { flexDirection: 'row', marginBottom: 28 }, trendLabels: { justifyContent: 'space-between', paddingBottom: 23, width: 76 }, trendLabel: { color: '#706C7D', fontSize: 10, height: 28, textAlign: 'right' }, trendPlotScroll: { paddingRight: 3 }, trendPlot: { height: 191, position: 'relative' }, trendGuide: { borderBottomColor: '#DDE8F5', borderBottomWidth: 1, height: 28 }, trendLine: { backgroundColor: '#7AA8D9', height: 2, position: 'absolute' }, trendPoint: { borderColor: '#FFFFFF', borderRadius: 8, borderWidth: 2, height: 16, position: 'absolute', width: 16 }, trendDateRow: { bottom: 0, flexDirection: 'row', left: 0, position: 'absolute', right: 0 }, trendDate: { color: '#706C7D', fontSize: 9, textAlign: 'center', width: 44 }, emptyTrend: { color: '#706C7D', fontSize: 13, fontStyle: 'italic', marginBottom: 28 },
-  trendsTheme: { backgroundColor: '#EFF4FF' }, rangeRow: { flexDirection: 'row', gap: 7, marginBottom: 24 }, rangeButton: { alignItems: 'center', backgroundColor: '#D9E9FF', borderRadius: 11, flex: 1, paddingVertical: 11 }, rangeButtonSelected: { backgroundColor: '#3568B7' }, rangeButtonText: { color: '#31599C', fontSize: 12, fontWeight: '700' }, rangeButtonTextSelected: { color: '#FFFFFF' }, trendSummary: { color: '#647B9E', fontSize: 13, marginBottom: 14 }, breakdownTitle: { color: '#294A82', fontSize: 18, fontWeight: '700', marginBottom: 13 }, breakdownRow: { alignItems: 'center', flexDirection: 'row', marginBottom: 12 }, breakdownSwatch: { borderRadius: 5, height: 10, marginRight: 7, width: 10 }, breakdownLabel: { color: '#405A80', fontSize: 12, width: 72 }, breakdownTrack: { backgroundColor: '#DDE8F5', borderRadius: 5, flex: 1, height: 10, overflow: 'hidden' }, breakdownFill: { borderRadius: 5, height: '100%' }, breakdownValue: { color: '#405A80', fontSize: 12, fontWeight: '700', textAlign: 'right', width: 38 }, emptyState: { backgroundColor: '#DDEBFF', borderRadius: 16, padding: 18 }, emptyStateTitle: { color: '#294D86', fontSize: 16, fontWeight: '700', marginBottom: 5 }, emptyStateText: { color: '#537196', fontSize: 13, lineHeight: 19 },
+  trendsTheme: { backgroundColor: '#EFF4FF' }, rangeRow: { flexDirection: 'row', gap: 7, marginBottom: 24 }, rangeButton: { alignItems: 'center', backgroundColor: '#D9E9FF', borderRadius: 11, flex: 1, paddingVertical: 11 }, rangeButtonSelected: { backgroundColor: '#3568B7' }, rangeButtonText: { color: '#31599C', fontSize: 12, fontWeight: '700' }, rangeButtonTextSelected: { color: '#FFFFFF' }, trendSummary: { color: '#647B9E', fontSize: 13, marginBottom: 14 }, breakdownTitle: { color: '#294A82', fontSize: 18, fontWeight: '700', marginBottom: 13 }, breakdownRow: { alignItems: 'center', flexDirection: 'row', marginBottom: 12 }, breakdownSwatch: { borderRadius: 5, height: 10, marginRight: 7, width: 10 }, breakdownLabel: { color: '#405A80', fontSize: 12, width: 72 }, breakdownTrack: { backgroundColor: '#DDE8F5', borderRadius: 5, flex: 1, height: 10, overflow: 'hidden' }, breakdownFill: { borderRadius: 5, height: '100%' }, breakdownValue: { color: '#405A80', fontSize: 12, fontWeight: '700', textAlign: 'right', width: 38 }, emptyState: { backgroundColor: '#DDEBFF', borderRadius: 16, padding: 18 }, emptyStateTitle: { color: '#294D86', fontSize: 16, fontWeight: '700', marginBottom: 5 }, emptyStateText: { color: '#537196', fontSize: 13, lineHeight: 19 }, weeklyAiCard: { backgroundColor: '#FFFFFF', borderColor: '#D8E3EF', borderRadius: 18, borderWidth: 1, marginTop: 26, padding: 17 }, weeklyAiTitle: { color: '#294A82', fontSize: 18, fontWeight: '800' }, weeklyAiText: { color: '#647B9E', fontSize: 13, lineHeight: 19, marginTop: 6 }, weeklyAiInput: { backgroundColor: '#F7FBFF', borderColor: '#D8E3EF', borderRadius: 10, borderWidth: 1, color: '#294A82', fontSize: 14, marginTop: 14, paddingHorizontal: 12, paddingVertical: 11 }, weeklyAiButton: { alignItems: 'center', borderRadius: 11, marginTop: 10, paddingVertical: 13 }, weeklyAiButtonText: { color: '#FFFFFF', fontSize: 14, fontWeight: '800' }, weeklyAiError: { color: '#A43E36', fontSize: 12, lineHeight: 17, marginTop: 10 }, weeklyAiResult: { backgroundColor: '#F7FBFF', borderRadius: 12, marginTop: 16, padding: 14 }, weeklyAiResultTitle: { color: '#294A82', fontSize: 16, fontWeight: '800' }, weeklyAiOverview: { color: '#405A80', fontSize: 14, lineHeight: 20, marginTop: 7 }, weeklyAiSectionTitle: { color: '#31599C', fontSize: 13, fontWeight: '800', marginTop: 13 }, weeklyAiBullet: { color: '#405A80', fontSize: 13, lineHeight: 19, marginTop: 4 }, weeklyAiAffirmation: { color: '#294A82', fontSize: 13, fontStyle: 'italic', lineHeight: 19, marginTop: 14 }, weeklyAiSupport: { color: '#A43E36', fontSize: 13, fontWeight: '700', lineHeight: 19, marginTop: 12 }, demoJournalCard: { backgroundColor: '#FFF8E6', borderRadius: 17, marginTop: 16, padding: 17 }, demoJournalTitle: { color: '#705A22', fontSize: 16, fontWeight: '800' }, demoJournalText: { color: '#756947', fontSize: 13, lineHeight: 19, marginTop: 5 }, demoJournalActions: { alignItems: 'center', flexDirection: 'row', gap: 11, marginTop: 14 }, demoJournalButton: { alignItems: 'center', borderRadius: 10, flex: 1, paddingVertical: 11 }, demoJournalButtonText: { fontSize: 13, fontWeight: '800' }, demoRemoveButton: { alignItems: 'center', backgroundColor: '#FFF0EE', borderRadius: 10, paddingHorizontal: 12, paddingVertical: 11 }, demoRemoveText: { color: '#A43E36', fontSize: 12, fontWeight: '800' },
   natureScene: { alignItems: 'center', backgroundColor: '#DCEFE1', borderRadius: 18, height: 230, justifyContent: 'center', marginBottom: 26, overflow: 'hidden', padding: 12 }, natureSceneNight: { backgroundColor: '#DCE7F3' }, natureCaption: { color: '#315C48', fontSize: 15, fontWeight: '700', marginTop: 2, textAlign: 'center' }, natureCaptionNight: { color: '#3D5872' },
   quickEntryButton: { alignItems: 'center', backgroundColor: '#FFFFFF', borderColor: '#DCD6F2', borderRadius: 18, borderWidth: 1, flexDirection: 'row', marginBottom: 16, padding: 15 }, quickEntryIcon: { alignItems: 'center', backgroundColor: '#EEE9FF', borderRadius: 22, height: 44, justifyContent: 'center', marginRight: 12, width: 44 }, quickEntryIconText: { color: '#5C4ABB', fontSize: 25 }, quickEntryCopy: { flex: 1 }, quickEntryTitle: { color: '#39334D', fontSize: 16, fontWeight: '700' }, quickEntryText: { color: '#706C7D', fontSize: 12, lineHeight: 17, marginTop: 3 }, quickEntryArrow: { color: '#6554C5', fontSize: 28, marginLeft: 8 },
   quickEntryHero: { alignItems: 'center', backgroundColor: '#ECE9FA', borderRadius: 20, marginBottom: 24, padding: 24 }, quickEntryHeroTitle: { color: '#39334D', fontSize: 20, fontWeight: '700', textAlign: 'center' }, quickEntryHeroText: { color: '#625D71', fontSize: 13, lineHeight: 19, marginTop: 7, textAlign: 'center' }, microphoneButton: { alignItems: 'center', backgroundColor: '#6554C5', borderRadius: 42, height: 84, justifyContent: 'center', marginTop: 22, width: 84 }, microphoneButtonActive: { backgroundColor: '#D94E4E' }, microphoneIcon: { color: '#FFFFFF', fontSize: 31 }, listeningText: { color: '#514593', fontSize: 13, fontWeight: '700', marginTop: 13 }, quickTranscriptLabel: { color: '#29243B', fontSize: 18, fontWeight: '700', marginBottom: 9 }, quickTranscriptInput: { backgroundColor: '#FFFFFF', borderColor: '#E2DFF0', borderRadius: 16, borderWidth: 1, color: '#29243B', fontSize: 16, lineHeight: 23, minHeight: 150, padding: 16 }, quickPrivacyText: { color: '#706C7D', fontSize: 12, lineHeight: 18, marginTop: 8 }, quickError: { color: '#A43E36', fontSize: 13, lineHeight: 19, marginTop: 12 },
