@@ -15,7 +15,12 @@ Export-all, delete-one, and delete-all controls
 Clear privacy and support language
 Entries are stored separately in the device's protected secure storage. To stay within secure-storage limits across iOS and Android, each entry is capped at 1,500 characters. AI features need explicit user consent.
 
-Run it locally
+
+How to run our app :
+ Link : https://mindjournal.languidlabs.com/
+ App menu has a load test data which load 30 days of journalling data. You can use generate ai summary to generate a summary of your journal data. You can also summarize each entry and there is also a find concepts option which helps you find and learn different terms from your journal. Modify themes , customize feelings and colors assoicated with it .
+
+Run it locally:
 Install Node.js (LTS) and the Expo Go app on an iPhone or Android device.
 Clone the repository: git clone https://github.com/ajstsubasa/MindJournal-AI.git
 Open the project: cd MindJournal-AI
