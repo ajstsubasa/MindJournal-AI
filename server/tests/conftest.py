@@ -1,6 +1,7 @@
 import os
 
 os.environ.setdefault("OPENAI_API_KEY", "test")
+os.environ.setdefault("API_KEY", "test")
 
 from contextlib import ExitStack
 
@@ -20,4 +21,9 @@ def client():
     with ExitStack() as stack:
         stack.enter_context(summarizer.agent.override(model=TestModel()))
         stack.enter_context(concept_finder.agent.override(model=TestModel()))
-        yield TestClient(main.app)
+        yield TestClient(main.app, headers={"X-API-Key": "test"})
+
+
+@pytest.fixture
+def unauthenticated_client():
+    return TestClient(main.app)

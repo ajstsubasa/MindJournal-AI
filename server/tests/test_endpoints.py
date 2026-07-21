@@ -38,3 +38,20 @@ def test_concepts_returns_three_concepts(client):
 def test_concepts_requires_data(client):
     response = client.post("/concepts", json={})
     assert response.status_code == 422
+
+
+def test_summarize_rejects_missing_api_key(unauthenticated_client):
+    response = unauthenticated_client.post("/summarize", json={"data": "x"})
+    assert response.status_code == 401
+
+
+def test_concepts_rejects_wrong_api_key(unauthenticated_client):
+    response = unauthenticated_client.post(
+        "/concepts", json={"data": "x"}, headers={"X-API-Key": "wrong"}
+    )
+    assert response.status_code == 401
+
+
+def test_health_is_public(unauthenticated_client):
+    response = unauthenticated_client.get("/health")
+    assert response.status_code == 200
