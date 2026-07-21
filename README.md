@@ -1,7 +1,8 @@
 A Journalling app which uses AI to provide insights into your mood and energy levels.
 
 How we used Codex and Chat GPT5.6
-Every single line of code was written by Codex and ChatGPT5.6. Design of the app was driven by us but the coding was done by Codex. We used 5.6 Terra. Debugging of the code was also done by GPT5.6
+
+Every single line of code was written by Codex and ChatGPT5.6. Design of the app was driven by us but the coding was done by Codex. We used 5.6 Terra. Debugging of the code was also done by GPT5.6. We at each step  created iterations of our app using Codex until we got a final polished version .
 
 Included in this app
 A calendar: select any past date to create, edit, or view its entry
