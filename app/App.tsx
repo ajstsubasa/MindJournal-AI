@@ -5,6 +5,7 @@ import {
   Alert,
   Image,
   KeyboardAvoidingView,
+  Modal,
   PanResponder,
   Platform,
   Pressable,
@@ -136,24 +137,7 @@ const MOODS_KEY = 'mindjournal.moods.v1';
 const APP_AI_BASE_URL = 'https://mindjournal.languidlabs.com';
 const WEEKLY_SUMMARY_FALLBACK_ENDPOINT = `${APP_AI_BASE_URL}/weekly-summary`;
 
-function confirmDialog(title: string, message: string, confirmLabel: string, onConfirm: () => void, destructive = false) {
-  if (Platform.OS === 'web') {
-    if (typeof window !== 'undefined' && window.confirm(`${title}\n\n${message}`)) onConfirm();
-    return;
-  }
-  Alert.alert(title, message, [
-    { text: 'Cancel', style: 'cancel' },
-    { text: confirmLabel, style: destructive ? 'destructive' : 'default', onPress: onConfirm },
-  ]);
-}
-
-function notifyDialog(title: string, message: string) {
-  if (Platform.OS === 'web') {
-    if (typeof window !== 'undefined') window.alert(`${title}\n\n${message}`);
-    return;
-  }
-  Alert.alert(title, message);
-}
+type DialogState = { confirmLabel: string | null; destructive: boolean; message: string; onConfirm: (() => void) | null; title: string };
 const sleepOptions = [
   { label: 'Good', value: '8' },
   { label: 'Medium', value: '6' },
@@ -330,6 +314,7 @@ export default function App() {
   const [trendRange, setTrendRange] = useState<TrendRange>('seven');
   const [menuOpen, setMenuOpen] = useState(false);
   const [appThemeName, setAppThemeName] = useState<AppThemeName>('ocean');
+  const [dialog, setDialog] = useState<DialogState | null>(null);
   const [themesOpen, setThemesOpen] = useState(false);
   const [moods, setMoods] = useState<Mood[]>(defaultMoods);
   const [newMoodLabel, setNewMoodLabel] = useState('');
@@ -495,6 +480,31 @@ export default function App() {
     setAppThemeName(theme);
     setThemesOpen(false);
     setLocalValue(THEME_KEY, theme).catch(() => undefined);
+  }
+
+  function confirmDialog(title: string, message: string, confirmLabel: string, onConfirm: () => void, destructive = false) {
+    if (Platform.OS === 'web') {
+      setDialog({ confirmLabel, destructive, message, onConfirm, title });
+      return;
+    }
+    Alert.alert(title, message, [
+      { text: 'Cancel', style: 'cancel' },
+      { text: confirmLabel, style: destructive ? 'destructive' : 'default', onPress: onConfirm },
+    ]);
+  }
+
+  function notifyDialog(title: string, message: string) {
+    if (Platform.OS === 'web') {
+      setDialog({ confirmLabel: null, destructive: false, message, onConfirm: null, title });
+      return;
+    }
+    Alert.alert(title, message);
+  }
+
+  function closeDialog(confirmed: boolean) {
+    const action = dialog?.onConfirm ?? null;
+    setDialog(null);
+    if (confirmed && action) action();
   }
 
   function saveMoodPreferences(nextMoods: Mood[]) {
@@ -947,6 +957,21 @@ export default function App() {
     }, true);
   }
 
+  const dialogModal = dialog ? (
+    <Modal animationType="fade" onRequestClose={() => closeDialog(false)} transparent visible>
+      <Pressable accessibilityLabel="Dismiss dialog" onPress={() => closeDialog(false)} style={styles.dialogBackdrop}>
+        <Pressable onPress={() => {}} style={[styles.dialogCard, { backgroundColor: appTheme.dark ? '#20393E' : '#FFFFFF' }]}>
+          <Text style={[styles.dialogTitle, { color: appTheme.text }]}>{dialog.title}</Text>
+          <Text style={[styles.dialogMessage, { color: appTheme.dark ? '#B9D2CB' : '#526B91' }]}>{dialog.message}</Text>
+          <View style={styles.dialogActions}>
+            {dialog.confirmLabel && <Pressable accessibilityRole="button" onPress={() => closeDialog(false)} style={[styles.dialogButton, { backgroundColor: appTheme.dark ? '#2C4A50' : appTheme.accent }]}><Text style={[styles.dialogButtonText, { color: appTheme.dark ? appTheme.text : appTheme.nav }]}>Cancel</Text></Pressable>}
+            <Pressable accessibilityRole="button" onPress={() => closeDialog(true)} style={[styles.dialogButton, { backgroundColor: dialog.destructive ? '#B4453C' : appTheme.primary }]}><Text style={[styles.dialogButtonText, { color: '#FFFFFF' }]}>{dialog.confirmLabel ?? 'OK'}</Text></Pressable>
+          </View>
+        </Pressable>
+      </Pressable>
+    </Modal>
+  ) : null;
+
   if (isLoading) {
     return <SafeAreaView style={[styles.safeArea, styles.loading]}><ActivityIndicator color="#3568B7" size="large" /></SafeAreaView>;
   }
@@ -955,6 +980,7 @@ export default function App() {
     return (
       <SafeAreaView style={[styles.safeArea, { backgroundColor: appTheme.background }]}>
         <StatusBar barStyle={appTheme.dark ? 'light-content' : 'dark-content'} />
+        {dialogModal}
         <ScrollView contentContainerStyle={styles.content}>
           <View style={styles.header}>
             <View><Text style={[styles.brand, { color: appTheme.text }]}>AI <Text style={[styles.brandAccent, { color: appTheme.primary }]}>reflection</Text></Text><Text style={[styles.date, { color: appTheme.dark ? '#B9D2CB' : appTheme.text }]}>Notice gentle patterns in your recent check-ins.</Text></View>
@@ -976,6 +1002,7 @@ export default function App() {
     return (
       <SafeAreaView style={[styles.safeArea, { backgroundColor: appTheme.background }]}>
         <StatusBar barStyle={appTheme.dark ? 'light-content' : 'dark-content'} />
+        {dialogModal}
         <ScrollView contentContainerStyle={styles.content}>
           <View style={styles.header}>
             <View><Text style={[styles.brand, { color: appTheme.text }]}>Your <Text style={[styles.brandAccent, { color: appTheme.primary }]}>streak</Text></Text><Text style={[styles.date, { color: appTheme.dark ? '#B9D2CB' : appTheme.text }]}>Small moments of reflection add up.</Text></View>
@@ -1006,6 +1033,7 @@ export default function App() {
     return (
       <SafeAreaView style={[styles.safeArea, styles.trendsTheme, { backgroundColor: appTheme.background }]}>
         <StatusBar barStyle={appTheme.dark ? "light-content" : "dark-content"} />
+        {dialogModal}
         <ScrollView contentContainerStyle={styles.content}>
           <View style={styles.header}>
             <View><Text style={styles.brand}>Mood <Text style={styles.brandAccent}>trends</Text></Text><Text style={styles.date}>Patterns from your saved check-ins</Text></View>
@@ -1053,6 +1081,7 @@ export default function App() {
     return (
       <SafeAreaView style={[styles.safeArea, { backgroundColor: appTheme.background }]}>
         <StatusBar barStyle={appTheme.dark ? 'light-content' : 'dark-content'} />
+        {dialogModal}
         <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
           <View style={styles.header}>
             <View><Text style={[styles.brand, { color: appTheme.text }]}>Your <Text style={[styles.brandAccent, { color: appTheme.primary }]}>feelings</Text></Text><Text style={[styles.date, { color: appTheme.dark ? '#B9D2CB' : appTheme.text }]}>Choose names and colors that feel right to you.</Text></View>
@@ -1080,6 +1109,7 @@ export default function App() {
     return (
       <SafeAreaView style={[styles.safeArea, styles.homeSafeArea, { backgroundColor: appTheme.background }]}>
         <StatusBar barStyle={appTheme.dark ? "light-content" : "dark-content"} />
+        {dialogModal}
         <View style={[styles.homeShell, { backgroundColor: appTheme.background }]}>
           <ScrollView contentContainerStyle={styles.homeContent} showsVerticalScrollIndicator={false}>
             <View style={styles.homeHeader}>
@@ -1134,6 +1164,7 @@ export default function App() {
   return (
     <SafeAreaView style={[styles.safeArea, screen === 'calendar' && styles.calendarTheme, screen === 'entry' && (isNight ? styles.entryNight : styles.entryDay), { backgroundColor: appTheme.background }]}>
       <StatusBar barStyle={appTheme.dark ? "light-content" : "dark-content"} />
+        {dialogModal}
       <VoiceTranscriptionEvents
         onEnd={() => setQuickListening(false)}
         onError={(error) => {
@@ -1269,9 +1300,16 @@ export default function App() {
 }
 
 const styles = StyleSheet.create({
-  safeArea: { flex: 1, backgroundColor: '#F6F4FF' }, loading: { alignItems: 'center', justifyContent: 'center' }, screen: { flex: 1 }, content: { padding: 22, paddingBottom: 42 }, entryDay: { backgroundColor: '#F1F7F2' }, entryNight: { backgroundColor: '#EEF3F9' }, entryTextLight: { color: '#2C3D54' }, entryDateLight: { color: '#506277' },
+  dialogBackdrop: { alignItems: 'center', backgroundColor: 'rgba(16,28,45,0.45)', flex: 1, justifyContent: 'center', padding: 24 },
+  dialogCard: { borderRadius: 20, elevation: 8, maxWidth: 400, padding: 22, shadowColor: '#101C2D', shadowOffset: { height: 12, width: 0 }, shadowOpacity: 0.18, shadowRadius: 28, width: '100%' },
+  dialogTitle: { fontSize: 17, fontWeight: '800' },
+  dialogMessage: { fontSize: 13, lineHeight: 20, marginTop: 8 },
+  dialogActions: { flexDirection: 'row', gap: 10, justifyContent: 'flex-end', marginTop: 18 },
+  dialogButton: { alignItems: 'center', borderRadius: 12, minWidth: 96, paddingHorizontal: 16, paddingVertical: 11 },
+  dialogButtonText: { fontSize: 13, fontWeight: '800' },
+  safeArea: { flex: 1, backgroundColor: '#F6F4FF' }, loading: { alignItems: 'center', justifyContent: 'center' }, screen: { flex: 1 }, content: { alignSelf: 'center', maxWidth: 560, padding: 22, paddingBottom: 42, width: '100%' }, entryDay: { backgroundColor: '#F1F7F2' }, entryNight: { backgroundColor: '#EEF3F9' }, entryTextLight: { color: '#2C3D54' }, entryDateLight: { color: '#506277' },
   calendarTheme: { backgroundColor: '#EFF4FF' }, calendarEntriesCard: { backgroundColor: '#FFFFFF', borderColor: '#D4E1F4', borderRadius: 18, borderWidth: 1, marginBottom: 18, padding: 15 }, calendarEntriesHeader: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between', marginBottom: 9 }, calendarEntriesTitle: { color: '#294D86', fontSize: 16, fontWeight: '800' }, calendarAddButton: { backgroundColor: '#D9F4F4', borderRadius: 10, paddingHorizontal: 10, paddingVertical: 8 }, calendarAddButtonText: { color: '#1F638D', fontSize: 12, fontWeight: '800' }, calendarEntryRow: { alignItems: 'center', borderTopColor: '#E8EFF8', borderTopWidth: 1, flexDirection: 'row', paddingVertical: 11 }, calendarEntryMood: { borderRadius: 5, height: 26, marginRight: 10, width: 5 }, calendarEntryCopy: { flex: 1 }, calendarEntryTime: { color: '#4271AE', fontSize: 11, fontWeight: '800', marginBottom: 3 }, calendarEntryText: { color: '#40516A', fontSize: 14 }, calendarEntryArrow: { color: '#6C8BBB', fontSize: 25, marginLeft: 8 }, calendarEmptyText: { color: '#71829B', fontSize: 13, lineHeight: 19, paddingVertical: 8 }, transcriptButton: { alignItems: 'center', backgroundColor: '#D9F4F4', borderRadius: 13, marginTop: 12, paddingVertical: 13 }, transcriptButtonText: { color: '#1C628C', fontSize: 14, fontWeight: '800' }, entryDateCard: { alignItems: 'center', backgroundColor: '#FFFFFF', borderColor: '#D8E3EF', borderRadius: 15, borderWidth: 1, flexDirection: 'row', justifyContent: 'space-between', marginBottom: 15, padding: 13 }, entryDateTitle: { color: '#315982', fontSize: 14, fontWeight: '800' }, entryDateHint: { color: '#70829A', fontSize: 11, marginTop: 3 }, entryDateInput: { backgroundColor: '#EFF4FF', borderRadius: 9, color: '#315982', fontSize: 13, fontWeight: '700', marginLeft: 8, paddingHorizontal: 9, paddingVertical: 8, width: 108 }, photoCard: { backgroundColor: '#FFFFFF', borderColor: '#D8E3EF', borderRadius: 15, borderWidth: 1, marginBottom: 24, padding: 13 }, photoHeader: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between', marginBottom: 12 }, photoTitle: { color: '#315982', fontSize: 14, fontWeight: '800' }, photoHint: { color: '#70829A', fontSize: 11, marginTop: 3 }, addPhotoButton: { alignItems: 'center', backgroundColor: '#EFF4FF', borderColor: '#D6E5F9', borderRadius: 12, borderStyle: 'dashed', borderWidth: 1, flexDirection: 'row', justifyContent: 'center', paddingVertical: 19 }, addPhotoIcon: { color: '#3568B7', fontSize: 22, marginRight: 8 }, addPhotoText: { color: '#315982', fontSize: 14, fontWeight: '800' }, photoPreview: { borderRadius: 11, height: 190, width: '100%' }, removePhotoText: { color: '#B94646', fontSize: 12, fontWeight: '800' }, changePhotoButton: { alignItems: 'center', paddingTop: 12 }, changePhotoText: { color: '#3568B7', fontSize: 13, fontWeight: '800' },
-  homeSafeArea: { backgroundColor: '#EFF4FF' }, homeShell: { flex: 1, backgroundColor: '#EFF4FF' }, homeContent: { paddingHorizontal: 20, paddingTop: 14, paddingBottom: 130 }, homeHeader: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between', marginBottom: 22 }, iconButton: { alignItems: 'center', backgroundColor: '#FFFFFF', borderRadius: 18, elevation: 2, height: 44, justifyContent: 'center', shadowColor: '#233C73', shadowOffset: { height: 2, width: 0 }, shadowOpacity: 0.1, shadowRadius: 5, width: 44 }, menuIcon: { color: '#31599C', fontSize: 25, lineHeight: 27 }, homeBrandWrap: { alignItems: 'center', flex: 1 }, homeBrand: { color: '#264A85', fontSize: 21, fontWeight: '800', letterSpacing: -0.5 }, homeBrandSub: { color: '#7084A9', fontSize: 11, marginTop: 2 }, homeLock: { alignItems: 'center', backgroundColor: '#D7E8FF', borderRadius: 18, height: 44, justifyContent: 'center', width: 44 }, homeLockText: { color: '#3567AF', fontSize: 23, fontWeight: '800' }, menuPanel: { backgroundColor: '#FFFFFF', borderColor: '#D7E1F2', borderRadius: 18, borderWidth: 1, marginBottom: 18, overflow: 'hidden', paddingVertical: 4 }, menuItem: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between', paddingHorizontal: 16, paddingVertical: 14 }, menuItemText: { color: '#294D86', fontSize: 14, fontWeight: '700' }, menuItemArrow: { color: '#6081B7', fontSize: 23 }, menuHint: { color: '#7A8CA9', fontSize: 11, lineHeight: 16, paddingHorizontal: 16, paddingBottom: 12 }, homeWelcomeCard: { backgroundColor: '#3568B7', borderRadius: 24, marginBottom: 28, overflow: 'hidden', padding: 22 }, homeWelcomeTitle: { color: '#FFFFFF', fontSize: 22, fontWeight: '800', letterSpacing: -0.4 }, homeWelcomeText: { color: '#E9F2FF', fontSize: 13, lineHeight: 19, marginTop: 7, maxWidth: '88%' }, homeWelcomeButton: { alignSelf: 'flex-start', backgroundColor: '#99F1F1', borderRadius: 17, marginTop: 17, paddingHorizontal: 15, paddingVertical: 10 }, homeWelcomeButtonText: { color: '#174C78', fontSize: 13, fontWeight: '800' }, recentHeader: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between', marginBottom: 13 }, recentTitle: { color: '#294A82', fontSize: 19, fontWeight: '800' }, recentCount: { color: '#6F86AB', fontSize: 12, fontWeight: '700' }, swipeContainer: { marginBottom: 12, overflow: 'hidden', position: 'relative' }, swipeDelete: { alignItems: 'flex-end', backgroundColor: '#D95A5A', borderRadius: 18, bottom: 0, justifyContent: 'center', paddingRight: 19, position: 'absolute', right: 0, top: 0, width: 108 }, swipeDeleteText: { color: '#FFFFFF', fontSize: 13, fontWeight: '800' }, recentEntryCard: { alignItems: 'stretch', backgroundColor: '#FFFFFF', borderRadius: 18, elevation: 1, flexDirection: 'row', minHeight: 102, overflow: 'hidden', shadowColor: '#214477', shadowOffset: { height: 2, width: 0 }, shadowOpacity: 0.08, shadowRadius: 5 }, recentMoodBar: { width: 7 }, recentEntryBody: { flex: 1, justifyContent: 'center', paddingHorizontal: 15, paddingVertical: 14 }, recentEntryTop: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between', marginBottom: 7 }, recentEntryDate: { color: '#31599A', fontSize: 12, fontWeight: '800', flex: 1 }, recentMoodPill: { borderRadius: 9, fontSize: 10, fontWeight: '800', marginLeft: 10, overflow: 'hidden', paddingHorizontal: 8, paddingVertical: 4 }, recentEntryPreview: { color: '#35455F', fontSize: 15, fontWeight: '700' }, recentEntryMeta: { color: '#8391A8', fontSize: 11, marginTop: 6 }, recentEntryImage: { alignSelf: 'center', borderRadius: 10, height: 68, marginRight: 10, width: 68 }, recentEntryArrow: { alignSelf: 'center', color: '#6D8CC0', fontSize: 29, marginRight: 13 }, recentEmpty: { alignItems: 'center', backgroundColor: '#E0EDFF', borderRadius: 18, padding: 25 }, recentEmptyTitle: { color: '#315A98', fontSize: 16, fontWeight: '800' }, recentEmptyText: { color: '#617FA9', fontSize: 13, lineHeight: 19, marginTop: 5, textAlign: 'center' }, bottomNav: { alignItems: 'center', backgroundColor: '#24467C', bottom: 0, flexDirection: 'row', justifyContent: 'space-between', left: 0, paddingBottom: 14, paddingHorizontal: 32, paddingTop: 13, position: 'absolute', right: 0 }, navButton: { alignItems: 'center', minWidth: 64 }, navIcon: { color: '#E7F0FF', fontSize: 24, lineHeight: 27 }, navLabel: { color: '#DDEBFF', fontSize: 10, fontWeight: '700', marginTop: 3 }, addButton: { alignItems: 'center', backgroundColor: '#91F2F3', borderColor: '#D5FFFF', borderRadius: 35, borderWidth: 3, height: 70, justifyContent: 'center', marginTop: -38, shadowColor: '#0E2A5C', shadowOffset: { height: 4, width: 0 }, shadowOpacity: 0.28, shadowRadius: 8, width: 70 }, addButtonText: { color: '#1E6190', fontSize: 42, fontWeight: '300', lineHeight: 45 },
+  homeSafeArea: { backgroundColor: '#EFF4FF' }, homeShell: { alignSelf: 'center', backgroundColor: '#EFF4FF', flex: 1, maxWidth: 560, width: '100%' }, homeContent: { paddingHorizontal: 20, paddingTop: 14, paddingBottom: 130 }, homeHeader: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between', marginBottom: 22 }, iconButton: { alignItems: 'center', backgroundColor: '#FFFFFF', borderRadius: 18, elevation: 2, height: 44, justifyContent: 'center', shadowColor: '#233C73', shadowOffset: { height: 2, width: 0 }, shadowOpacity: 0.1, shadowRadius: 5, width: 44 }, menuIcon: { color: '#31599C', fontSize: 25, lineHeight: 27 }, homeBrandWrap: { alignItems: 'center', flex: 1 }, homeBrand: { color: '#264A85', fontSize: 21, fontWeight: '800', letterSpacing: -0.5 }, homeBrandSub: { color: '#7084A9', fontSize: 11, marginTop: 2 }, homeLock: { alignItems: 'center', backgroundColor: '#D7E8FF', borderRadius: 18, height: 44, justifyContent: 'center', width: 44 }, homeLockText: { color: '#3567AF', fontSize: 23, fontWeight: '800' }, menuPanel: { backgroundColor: '#FFFFFF', borderColor: '#D7E1F2', borderRadius: 18, borderWidth: 1, marginBottom: 18, overflow: 'hidden', paddingVertical: 4 }, menuItem: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between', paddingHorizontal: 16, paddingVertical: 14 }, menuItemText: { color: '#294D86', fontSize: 14, fontWeight: '700' }, menuItemArrow: { color: '#6081B7', fontSize: 23 }, menuHint: { color: '#7A8CA9', fontSize: 11, lineHeight: 16, paddingHorizontal: 16, paddingBottom: 12 }, homeWelcomeCard: { backgroundColor: '#3568B7', borderRadius: 24, marginBottom: 28, overflow: 'hidden', padding: 22 }, homeWelcomeTitle: { color: '#FFFFFF', fontSize: 22, fontWeight: '800', letterSpacing: -0.4 }, homeWelcomeText: { color: '#E9F2FF', fontSize: 13, lineHeight: 19, marginTop: 7, maxWidth: '88%' }, homeWelcomeButton: { alignSelf: 'flex-start', backgroundColor: '#99F1F1', borderRadius: 17, marginTop: 17, paddingHorizontal: 15, paddingVertical: 10 }, homeWelcomeButtonText: { color: '#174C78', fontSize: 13, fontWeight: '800' }, recentHeader: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between', marginBottom: 13 }, recentTitle: { color: '#294A82', fontSize: 19, fontWeight: '800' }, recentCount: { color: '#6F86AB', fontSize: 12, fontWeight: '700' }, swipeContainer: { marginBottom: 12, overflow: 'hidden', position: 'relative' }, swipeDelete: { alignItems: 'flex-end', backgroundColor: '#D95A5A', borderRadius: 18, bottom: 0, justifyContent: 'center', paddingRight: 19, position: 'absolute', right: 0, top: 0, width: 108 }, swipeDeleteText: { color: '#FFFFFF', fontSize: 13, fontWeight: '800' }, recentEntryCard: { alignItems: 'stretch', backgroundColor: '#FFFFFF', borderRadius: 18, elevation: 1, flexDirection: 'row', minHeight: 102, overflow: 'hidden', shadowColor: '#214477', shadowOffset: { height: 2, width: 0 }, shadowOpacity: 0.08, shadowRadius: 5 }, recentMoodBar: { width: 7 }, recentEntryBody: { flex: 1, justifyContent: 'center', paddingHorizontal: 15, paddingVertical: 14 }, recentEntryTop: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between', marginBottom: 7 }, recentEntryDate: { color: '#31599A', fontSize: 12, fontWeight: '800', flex: 1 }, recentMoodPill: { borderRadius: 9, fontSize: 10, fontWeight: '800', marginLeft: 10, overflow: 'hidden', paddingHorizontal: 8, paddingVertical: 4 }, recentEntryPreview: { color: '#35455F', fontSize: 15, fontWeight: '700' }, recentEntryMeta: { color: '#8391A8', fontSize: 11, marginTop: 6 }, recentEntryImage: { alignSelf: 'center', borderRadius: 10, height: 68, marginRight: 10, width: 68 }, recentEntryArrow: { alignSelf: 'center', color: '#6D8CC0', fontSize: 29, marginRight: 13 }, recentEmpty: { alignItems: 'center', backgroundColor: '#E0EDFF', borderRadius: 18, padding: 25 }, recentEmptyTitle: { color: '#315A98', fontSize: 16, fontWeight: '800' }, recentEmptyText: { color: '#617FA9', fontSize: 13, lineHeight: 19, marginTop: 5, textAlign: 'center' }, bottomNav: { alignItems: 'center', backgroundColor: '#24467C', bottom: 0, flexDirection: 'row', justifyContent: 'space-between', left: 0, paddingBottom: 14, paddingHorizontal: 32, paddingTop: 13, position: 'absolute', right: 0 }, navButton: { alignItems: 'center', minWidth: 64 }, navIcon: { color: '#E7F0FF', fontSize: 24, lineHeight: 27 }, navLabel: { color: '#DDEBFF', fontSize: 10, fontWeight: '700', marginTop: 3 }, addButton: { alignItems: 'center', backgroundColor: '#91F2F3', borderColor: '#D5FFFF', borderRadius: 35, borderWidth: 3, height: 70, justifyContent: 'center', marginTop: -38, shadowColor: '#0E2A5C', shadowOffset: { height: 4, width: 0 }, shadowOpacity: 0.28, shadowRadius: 8, width: 70 }, addButtonText: { color: '#1E6190', fontSize: 42, fontWeight: '300', lineHeight: 45 },
   header: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between', marginBottom: 16 }, headerActions: { alignItems: 'center', flexDirection: 'row', gap: 8 }, brand: { color: '#294A82', fontSize: 24, fontWeight: '700', letterSpacing: -0.6 }, brandAccent: { color: '#3568B7' }, date: { color: '#647B9E', fontSize: 14, marginTop: 3 }, lock: { alignItems: 'center', backgroundColor: '#EAE6FF', borderRadius: 20, height: 40, justifyContent: 'center', width: 40 }, lockText: { color: '#5949B7', fontSize: 9, fontWeight: '800' }, trendsButton: { backgroundColor: '#6554C5', borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10 }, trendsButtonText: { color: '#FFFFFF', fontSize: 12, fontWeight: '700' }, headerDateButton: { alignItems: 'center', backgroundColor: '#D9E9FF', borderRadius: 10, flexDirection: 'row', paddingHorizontal: 9, paddingVertical: 9 }, headerDateText: { color: '#31599C', fontSize: 12, fontWeight: '800' }, headerDateChevron: { color: '#31599C', fontSize: 15, marginLeft: 4 }, headerDateDropdown: { backgroundColor: '#FFFFFF', borderColor: '#D8E3EF', borderRadius: 15, borderWidth: 1, marginBottom: 16, marginTop: -8, padding: 12 }, backButton: { backgroundColor: '#D9E9FF', borderRadius: 10, paddingHorizontal: 13, paddingVertical: 10 }, backButtonText: { color: '#31599C', fontSize: 12, fontWeight: '800' },
   notice: { backgroundColor: '#DDEBFF', borderRadius: 16, marginBottom: 28, padding: 16 }, noticeTitle: { color: '#294D86', fontSize: 15, fontWeight: '700', marginBottom: 5 }, noticeText: { color: '#537196', fontSize: 13, lineHeight: 19 },
   title: { color: '#294A82', fontSize: 20, fontWeight: '700', letterSpacing: -0.3 }, subtitle: { color: '#647B9E', fontSize: 14, marginTop: 5 }, calendarHeader: { marginBottom: 13 }, monthControls: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between', marginTop: 12 }, monthButton: { alignItems: 'center', backgroundColor: '#D9E9FF', borderRadius: 15, height: 30, justifyContent: 'center', width: 30 }, monthButtonText: { color: '#31599C', fontSize: 25, lineHeight: 28 }, monthLabel: { color: '#315982', fontSize: 14, fontWeight: '700' }, weekRow: { flexDirection: 'row', marginBottom: 6 }, weekday: { color: '#7186A7', fontSize: 11, fontWeight: '700', textAlign: 'center', width: '14.285%' }, calendarGrid: { flexDirection: 'row', flexWrap: 'wrap', marginBottom: 11 }, dayCell: { alignItems: 'center', borderRadius: 13, height: 42, justifyContent: 'center', marginVertical: 1, width: '14.285%' }, daySelected: { backgroundColor: '#3568B7' }, daySelectedOutline: { borderColor: '#24467C', borderWidth: 2 }, dayFuture: { opacity: 0.3 }, dayNumber: { color: '#405A80', fontSize: 14, fontWeight: '600' }, dayNumberSelected: { color: '#FFFFFF' }, entryDot: { backgroundColor: '#3568B7', borderRadius: 3, bottom: 5, height: 5, position: 'absolute', width: 5 }, selectedDate: { color: '#31599C', fontSize: 13, fontWeight: '700', marginBottom: 25, textAlign: 'center' },
