@@ -5,6 +5,6 @@ WORKDIR /app
 COPY . .
 RUN uv sync
 
-EXPOSE 8000
+EXPOSE 80
 
 CMD ["uv", "run", "main.py"]
