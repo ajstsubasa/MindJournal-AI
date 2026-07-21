@@ -23,7 +23,7 @@ import { GirlWaving } from './src/GirlWaving';
 import { JournalEntry, loadEntries, removeAllEntries, removeEntry, saveEntry } from './src/storage';
 
 type Mood = { color: string; label: string; textColor: string; value: number };
-type Screen = 'home' | 'calendar' | 'entry' | 'trends';
+type Screen = 'home' | 'calendar' | 'entry' | 'trends' | 'moods' | 'streak';
 type TrendRange = 'seven' | 'thirty' | 'sixMonths';
 type AppThemeName = 'ocean' | 'forest' | 'rose' | 'midnight';
 type AppTheme = { accent: string; background: string; dark: boolean; name: string; nav: string; primary: string; text: string };
@@ -42,7 +42,7 @@ try {
   // A mismatched native package should not prevent the rest of the journal from opening.
 }
 
-const moods: Mood[] = [
+const defaultMoods: Mood[] = [
   { color: '#181818', label: 'Very Low', textColor: '#FFFFFF', value: 1 },
   { color: '#9B9B9B', label: 'Low', textColor: '#1E1E1E', value: 2 },
   { color: '#F3CD4D', label: 'Okay', textColor: '#392F00', value: 3 },
@@ -50,7 +50,7 @@ const moods: Mood[] = [
   { color: '#4E85DF', label: 'Really Good', textColor: '#FFFFFF', value: 5 },
   { color: '#D94E4E', label: 'Anxious', textColor: '#FFFFFF', value: 6 },
 ];
-const moodByValue = Object.fromEntries(moods.map((mood) => [mood.value, mood])) as Record<number, Mood>;
+const moodColors = ['#181818', '#6B7280', '#C88B18', '#4E85DF', '#50A66D', '#D94E4E', '#8B5CC7', '#DB5A9A', '#137B7F', '#A66236'];
 const moodPrompts: Record<number, string[]> = {
   1: [
     'What is the kindest, smallest thing you can ask of yourself right now?',
@@ -128,6 +128,7 @@ const moodPrompts: Record<number, string[]> = {
 const weekDays = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const MAX_ENTRY_LENGTH = 1500;
 const THEME_KEY = 'mindjournal.app-theme.v1';
+const MOODS_KEY = 'mindjournal.moods.v1';
 const sleepOptions = [
   { label: 'Good', value: '8' },
   { label: 'Medium', value: '6' },
@@ -148,6 +149,12 @@ function dateKey(date: Date) {
   return `${year}-${month}-${day}`;
 }
 
+function previousDateKey(key: string) {
+  const date = new Date(`${key}T12:00:00`);
+  date.setDate(date.getDate() - 1);
+  return dateKey(date);
+}
+
 function readableDate(key: string) {
   return new Intl.DateTimeFormat('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })
     .format(new Date(`${key}T12:00:00`));
@@ -155,6 +162,23 @@ function readableDate(key: string) {
 
 function readableTime(iso: string) {
   return new Intl.DateTimeFormat('en-US', { hour: 'numeric', minute: '2-digit' }).format(new Date(iso));
+}
+
+function textColorForBackground(color: string) {
+  const hex = color.replace('#', '');
+  if (hex.length !== 6) return '#FFFFFF';
+  const [red, green, blue] = [0, 2, 4].map((index) => Number.parseInt(hex.slice(index, index + 2), 16));
+  return red * 0.299 + green * 0.587 + blue * 0.114 > 160 ? '#1E293B' : '#FFFFFF';
+}
+
+function validMoodList(raw: unknown): raw is Mood[] {
+  return Array.isArray(raw) && raw.length > 0 && raw.every((mood) => (
+    mood && typeof mood === 'object'
+    && typeof (mood as Mood).value === 'number'
+    && typeof (mood as Mood).label === 'string'
+    && typeof (mood as Mood).color === 'string'
+    && typeof (mood as Mood).textColor === 'string'
+  ));
 }
 
 function sleepSummary(hours: number | null) {
@@ -197,13 +221,13 @@ function VoiceTranscriptionEvents({ onEnd, onError, onResult, onStart }: VoiceTr
 
 type SwipeableEntryCardProps = {
   entry: JournalEntry;
+  mood?: Mood;
   onDelete: () => void;
   onEdit: () => void;
 };
 
-function SwipeableEntryCard({ entry, onDelete, onEdit }: SwipeableEntryCardProps) {
+function SwipeableEntryCard({ entry, mood, onDelete, onEdit }: SwipeableEntryCardProps) {
   const translateX = useRef(new Animated.Value(0)).current;
-  const mood = entry.mood ? moodByValue[entry.mood] : null;
   const panResponder = useMemo(() => PanResponder.create({
     onMoveShouldSetPanResponder: (_, gesture) => Math.abs(gesture.dx) > 12 && Math.abs(gesture.dx) > Math.abs(gesture.dy),
     onPanResponderMove: (_, gesture) => translateX.setValue(Math.min(0, Math.max(-96, gesture.dx))),
@@ -247,6 +271,9 @@ export default function App() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [appThemeName, setAppThemeName] = useState<AppThemeName>('ocean');
   const [themesOpen, setThemesOpen] = useState(false);
+  const [moods, setMoods] = useState<Mood[]>(defaultMoods);
+  const [newMoodLabel, setNewMoodLabel] = useState('');
+  const [newMoodColor, setNewMoodColor] = useState(moodColors[6]);
   const [quickTranscript, setQuickTranscript] = useState('');
   const [quickError, setQuickError] = useState<string | null>(null);
   const [quickListening, setQuickListening] = useState(false);
@@ -259,17 +286,48 @@ export default function App() {
 
   const dayEntries = entries[selectedDate] ?? [];
   const appTheme = appThemes[appThemeName];
+  const moodByValue = useMemo(() => Object.fromEntries(moods.map((mood) => [mood.value, mood])) as Record<number, Mood>, [moods]);
+  const moodIndexByValue = useMemo(() => Object.fromEntries(moods.map((mood, index) => [mood.value, index])) as Record<number, number>, [moods]);
   const existingEntry = dayEntries.find((entry) => entry.id === editingEntryId);
-  const activePrompts = selectedMood ? moodPrompts[selectedMood] : [];
+  const activePrompts = selectedMood ? (moodPrompts[selectedMood] ?? [
+    `What is this ${moodByValue[selectedMood]?.label.toLowerCase() ?? 'feeling'} trying to tell you?`,
+    'What would help you feel supported in this moment?',
+    'What is one gentle next step you can take for yourself?',
+  ]) : [];
   const activePrompt = activePrompts.length ? activePrompts[promptIndex % activePrompts.length] : 'Choose a feeling to receive a reflection prompt tailored to this moment.';
   const sortedMoodEntries = useMemo(
-    () => Object.values(entries).flat().filter((entry) => entry.mood !== null).sort((a, b) => a.date.localeCompare(b.date)),
-    [entries],
+    () => Object.values(entries).flat().filter((entry) => entry.mood !== null && Boolean(moodByValue[entry.mood])).sort((a, b) => a.date.localeCompare(b.date)),
+    [entries, moodByValue],
   );
   const recentEntries = useMemo(
     () => Object.values(entries).flat().sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)),
     [entries],
   );
+  const streakStats = useMemo(() => {
+    const checkInDates = new Set(Object.entries(entries).filter(([, dayEntries]) => dayEntries.length > 0).map(([date]) => date));
+    let current = 0;
+    let cursor = todayKey;
+    while (checkInDates.has(cursor)) {
+      current += 1;
+      cursor = previousDateKey(cursor);
+    }
+    const orderedDates = [...checkInDates].sort();
+    let longest = 0;
+    let run = 0;
+    let previous: string | null = null;
+    orderedDates.forEach((date) => {
+      run = previous && previousDateKey(date) === previous ? run + 1 : 1;
+      longest = Math.max(longest, run);
+      previous = date;
+    });
+    const recentDays = Array.from({ length: 7 }, (_, index) => {
+      const date = new Date();
+      date.setDate(date.getDate() - (6 - index));
+      const key = dateKey(date);
+      return { checkedIn: checkInDates.has(key), key, label: new Intl.DateTimeFormat('en-US', { weekday: 'narrow' }).format(date) };
+    });
+    return { current, longest, recentDays, total: checkInDates.size };
+  }, [entries, todayKey]);
   const trendEntries = useMemo(() => {
     if (trendRange === 'seven') return sortedMoodEntries.slice(-7);
     if (trendRange === 'thirty') return sortedMoodEntries.slice(-30);
@@ -337,10 +395,69 @@ export default function App() {
     }).catch(() => undefined);
   }, []);
 
+  useEffect(() => {
+    SecureStore.getItemAsync(MOODS_KEY).then((storedMoods) => {
+      if (!storedMoods) return;
+      try {
+        const parsed = JSON.parse(storedMoods);
+        if (validMoodList(parsed)) setMoods(parsed);
+      } catch {
+        // Keep the safe default feelings if a saved preference cannot be read.
+      }
+    }).catch(() => undefined);
+  }, []);
+
   function chooseAppTheme(theme: AppThemeName) {
     setAppThemeName(theme);
     setThemesOpen(false);
     SecureStore.setItemAsync(THEME_KEY, theme).catch(() => undefined);
+  }
+
+  function saveMoodPreferences(nextMoods: Mood[]) {
+    setMoods(nextMoods);
+    SecureStore.setItemAsync(MOODS_KEY, JSON.stringify(nextMoods)).catch(() => undefined);
+  }
+
+  function updateMood(value: number, changes: Partial<Pick<Mood, 'color' | 'label'>>) {
+    const nextMoods = moods.map((mood) => mood.value === value
+      ? { ...mood, ...changes, textColor: changes.color ? textColorForBackground(changes.color) : mood.textColor }
+      : mood);
+    saveMoodPreferences(nextMoods);
+  }
+
+  function addMood() {
+    const label = newMoodLabel.trim();
+    if (!label) {
+      Alert.alert('Name this feeling', 'Add a short emotion name before saving it.');
+      return;
+    }
+    if (moods.some((mood) => mood.label.toLowerCase() === label.toLowerCase())) {
+      Alert.alert('Already added', 'Choose a different name for this feeling.');
+      return;
+    }
+    const value = Math.max(0, ...moods.map((mood) => mood.value)) + 1;
+    saveMoodPreferences([...moods, { color: newMoodColor, label: label.slice(0, 24), textColor: textColorForBackground(newMoodColor), value }]);
+    setNewMoodLabel('');
+    setNewMoodColor(moodColors[(moods.length + 1) % moodColors.length]);
+  }
+
+  function removeMood(mood: Mood) {
+    if (moods.length === 1) {
+      Alert.alert('Keep one feeling', 'Add another feeling before removing this one.');
+      return;
+    }
+    const isUsed = Object.values(entries).flat().some((entry) => entry.mood === mood.value);
+    if (isUsed) {
+      Alert.alert('This feeling is in your journal', `Keep “${mood.label}” so existing entries and calendar colors stay accurate. You can rename it or change its color instead.`);
+      return;
+    }
+    Alert.alert(`Remove “${mood.label}”?`, 'This only removes it from the mood picker.', [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Remove', style: 'destructive', onPress: () => {
+        saveMoodPreferences(moods.filter((item) => item.value !== mood.value));
+        if (selectedMood === mood.value) setSelectedMood(null);
+      } },
+    ]);
   }
 
   function chooseDate(key: string) {
@@ -615,6 +732,36 @@ export default function App() {
     return <SafeAreaView style={[styles.safeArea, styles.loading]}><ActivityIndicator color="#3568B7" size="large" /></SafeAreaView>;
   }
 
+  if (screen === 'streak') {
+    return (
+      <SafeAreaView style={[styles.safeArea, { backgroundColor: appTheme.background }]}>
+        <StatusBar barStyle={appTheme.dark ? 'light-content' : 'dark-content'} />
+        <ScrollView contentContainerStyle={styles.content}>
+          <View style={styles.header}>
+            <View><Text style={[styles.brand, { color: appTheme.text }]}>Your <Text style={[styles.brandAccent, { color: appTheme.primary }]}>streak</Text></Text><Text style={[styles.date, { color: appTheme.dark ? '#B9D2CB' : appTheme.text }]}>Small moments of reflection add up.</Text></View>
+            <Pressable accessibilityLabel="Back to home" onPress={() => setScreen('home')} style={[styles.backButton, { backgroundColor: appTheme.accent }]}><Text style={[styles.backButtonText, { color: appTheme.nav }]}>Back</Text></Pressable>
+          </View>
+          <View style={[styles.streakHero, { backgroundColor: appTheme.primary }]}>
+            <Text style={styles.streakEmoji}>{streakStats.current >= 7 ? '🔥' : streakStats.current > 0 ? '✦' : '☀'}</Text>
+            <Text style={styles.streakNumber}>{streakStats.current}</Text>
+            <Text style={styles.streakLabel}>day{streakStats.current === 1 ? '' : 's'} in a row</Text>
+            <Text style={styles.streakMessage}>{streakStats.current ? 'You checked in today. Keep showing up gently.' : 'Save a reflection today to begin a new streak.'}</Text>
+          </View>
+          <View style={styles.streakStatsRow}>
+            <View style={styles.streakStatCard}><Text style={[styles.streakStatValue, { color: appTheme.primary }]}>{streakStats.longest}</Text><Text style={styles.streakStatLabel}>Longest streak</Text></View>
+            <View style={styles.streakStatCard}><Text style={[styles.streakStatValue, { color: appTheme.primary }]}>{streakStats.total}</Text><Text style={styles.streakStatLabel}>Days reflected</Text></View>
+          </View>
+          <View style={styles.streakWeekCard}>
+            <Text style={styles.streakWeekTitle}>Your last 7 days</Text>
+            <View style={styles.streakWeekRow}>{streakStats.recentDays.map((day) => <View key={day.key} style={styles.streakDay}><View style={[styles.streakDayDot, { backgroundColor: day.checkedIn ? appTheme.primary : '#DDE8F5' }]}><Text style={[styles.streakDayMark, { color: day.checkedIn ? '#FFFFFF' : '#91A1B6' }]}>{day.checkedIn ? '✓' : '·'}</Text></View><Text style={styles.streakDayLabel}>{day.label}</Text></View>)}</View>
+            <Text style={styles.streakWeekHint}>A day counts once you save at least one journal entry.</Text>
+          </View>
+          <View style={styles.streakGentleCard}><Text style={styles.streakGentleTitle}>A gentle reminder</Text><Text style={styles.streakGentleText}>Streaks are here to celebrate—not pressure you. Missing a day never takes away the reflections you have made.</Text></View>
+        </ScrollView>
+      </SafeAreaView>
+    );
+  }
+
   if (screen === 'trends') {
     return (
       <SafeAreaView style={[styles.safeArea, styles.trendsTheme, { backgroundColor: appTheme.background }]}>
@@ -634,19 +781,19 @@ export default function App() {
             <View accessibilityLabel="Mood trend graph showing feeling categories by date" style={styles.trendChart}>
               <View style={styles.trendLabels}>{[...moods].reverse().map((mood) => <Text key={mood.value} style={styles.trendLabel}>{mood.label}</Text>)}</View>
               <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.trendPlotScroll}>
-                <View style={[styles.trendPlot, { width: Math.max(180, trendEntries.length * 44) }]}>
+                <View style={[styles.trendPlot, { height: Math.max(191, moods.length * 28 + 23), width: Math.max(180, trendEntries.length * 44) }]}>
                   {[...moods].reverse().map((mood) => <View key={mood.value} style={styles.trendGuide} />)}
                   {trendEntries.slice(1).map((entry, index) => {
                     const previous = trendEntries[index];
                     const x1 = index * 44 + 22;
-                    const y1 = (6 - (previous.mood ?? 1)) * 28 + 14;
+                    const y1 = (moods.length - 1 - (moodIndexByValue[previous.mood!] ?? 0)) * 28 + 14;
                     const x2 = (index + 1) * 44 + 22;
-                    const y2 = (6 - (entry.mood ?? 1)) * 28 + 14;
+                    const y2 = (moods.length - 1 - (moodIndexByValue[entry.mood!] ?? 0)) * 28 + 14;
                     const length = Math.hypot(x2 - x1, y2 - y1);
                     const angle = Math.atan2(y2 - y1, x2 - x1) * (180 / Math.PI);
                     return <View key={`line-${entry.id}`} style={[styles.trendLine, { left: (x1 + x2 - length) / 2, top: (y1 + y2) / 2 - 1, transform: [{ rotate: `${angle}deg` }], width: length }]} />;
                   })}
-                  {trendEntries.map((entry, index) => <View key={entry.id} style={[styles.trendPoint, { backgroundColor: moodByValue[entry.mood!].color, left: index * 44 + 15, top: (6 - entry.mood!) * 28 + 7 }]} />)}
+                  {trendEntries.map((entry, index) => <View key={entry.id} style={[styles.trendPoint, { backgroundColor: moodByValue[entry.mood!]?.color ?? appTheme.primary, left: index * 44 + 15, top: (moods.length - 1 - (moodIndexByValue[entry.mood!] ?? 0)) * 28 + 7 }]} />)}
                   <View style={styles.trendDateRow}>{trendEntries.map((entry) => <Text key={`date-${entry.id}`} style={styles.trendDate}>{entry.date.slice(5).replace('-', '/')}</Text>)}</View>
                 </View>
               </ScrollView>
@@ -657,6 +804,33 @@ export default function App() {
               return <View key={mood.value} style={styles.breakdownRow}><View style={[styles.breakdownSwatch, { backgroundColor: mood.color }]} /><Text style={styles.breakdownLabel}>{mood.label}</Text><View style={styles.breakdownTrack}><View style={[styles.breakdownFill, { backgroundColor: mood.color, width: `${percentage}%` }]} /></View><Text style={styles.breakdownValue}>{percentage}%</Text></View>;
             })}
           </> : <View style={styles.emptyState}><Text style={styles.emptyStateTitle}>No check-ins in this period</Text><Text style={styles.emptyStateText}>Save a feeling on the calendar to begin seeing your trends.</Text></View>}
+        </ScrollView>
+      </SafeAreaView>
+    );
+  }
+
+  if (screen === 'moods') {
+    return (
+      <SafeAreaView style={[styles.safeArea, { backgroundColor: appTheme.background }]}>
+        <StatusBar barStyle={appTheme.dark ? 'light-content' : 'dark-content'} />
+        <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+          <View style={styles.header}>
+            <View><Text style={[styles.brand, { color: appTheme.text }]}>Your <Text style={[styles.brandAccent, { color: appTheme.primary }]}>feelings</Text></Text><Text style={[styles.date, { color: appTheme.dark ? '#B9D2CB' : appTheme.text }]}>Choose names and colors that feel right to you.</Text></View>
+            <Pressable accessibilityLabel="Back to home" onPress={() => setScreen('home')} style={[styles.backButton, { backgroundColor: appTheme.accent }]}><Text style={[styles.backButtonText, { color: appTheme.nav }]}>Back</Text></Pressable>
+          </View>
+          <View style={styles.moodSettingsNotice}><Text style={styles.moodSettingsNoticeTitle}>Personalize your mood map</Text><Text style={styles.moodSettingsNoticeText}>These names and colors stay on this device. Updating one also updates the color shown for its past calendar entries.</Text></View>
+          <Text style={styles.moodSettingsTitle}>Your feelings</Text>
+          {moods.map((mood) => <View key={mood.value} style={styles.moodSettingsCard}>
+            <View style={styles.moodSettingsTop}><View style={[styles.moodSettingsPreview, { backgroundColor: mood.color }]}><Text style={{ color: mood.textColor }}>●</Text></View><TextInput accessibilityLabel={`Name for ${mood.label}`} maxLength={24} onChangeText={(label) => updateMood(mood.value, { label })} placeholder="Feeling name" style={styles.moodNameInput} value={mood.label} /><Pressable accessibilityLabel={`Remove ${mood.label}`} onPress={() => removeMood(mood)} style={styles.moodRemoveButton}><Text style={styles.moodRemoveText}>Remove</Text></Pressable></View>
+            <View style={styles.colorChoiceRow}>{moodColors.map((color) => <Pressable accessibilityLabel={`Use ${color} for ${mood.label}`} key={color} onPress={() => updateMood(mood.value, { color })} style={[styles.colorChoice, { backgroundColor: color }, mood.color === color && styles.colorChoiceSelected]} />)}</View>
+          </View>)}
+          <View style={styles.addMoodCard}>
+            <Text style={styles.moodSettingsTitle}>Add an emotion</Text>
+            <Text style={styles.addMoodHint}>For example: Calm, Stressed, Hopeful, or Numb.</Text>
+            <TextInput accessibilityLabel="New emotion name" maxLength={24} onChangeText={setNewMoodLabel} placeholder="Emotion name" placeholderTextColor="#7186A7" style={styles.newMoodInput} value={newMoodLabel} />
+            <View style={styles.colorChoiceRow}>{moodColors.map((color) => <Pressable accessibilityLabel={`Choose ${color} for new emotion`} key={color} onPress={() => setNewMoodColor(color)} style={[styles.colorChoice, { backgroundColor: color }, newMoodColor === color && styles.colorChoiceSelected]} />)}</View>
+            <Pressable accessibilityRole="button" onPress={addMood} style={[styles.addMoodButton, { backgroundColor: appTheme.primary }]}><Text style={styles.addMoodButtonText}>Add emotion</Text></Pressable>
+          </View>
         </ScrollView>
       </SafeAreaView>
     );
@@ -681,6 +855,8 @@ export default function App() {
 
             {menuOpen && <View style={styles.menuPanel}>
               <Pressable onPress={() => { setMenuOpen(false); setScreen('trends'); }} style={styles.menuItem}><Text style={styles.menuItemText}>Mood trends</Text><Text style={styles.menuItemArrow}>›</Text></Pressable>
+              <Pressable onPress={() => { setMenuOpen(false); setScreen('streak'); }} style={styles.menuItem}><Text style={styles.menuItemText}>Your streak</Text><Text style={styles.menuItemArrow}>›</Text></Pressable>
+              <Pressable onPress={() => { setMenuOpen(false); setScreen('moods'); }} style={styles.menuItem}><Text style={styles.menuItemText}>Feelings & colors</Text><Text style={styles.menuItemArrow}>›</Text></Pressable>
               <Pressable onPress={() => { setThemesOpen((open) => !open); }} style={styles.menuItem}><Text style={styles.menuItemText}>Appearance</Text><Text style={styles.menuItemArrow}>{themesOpen ? '⌃' : '›'}</Text></Pressable>
               {themesOpen && <View style={styles.themeChoices}>{(Object.entries(appThemes) as [AppThemeName, AppTheme][]).map(([key, theme]) => <Pressable key={key} onPress={() => chooseAppTheme(key)} style={[styles.themeChoice, appThemeName === key && { borderColor: theme.primary, borderWidth: 2 }]}><View style={[styles.themeSwatch, { backgroundColor: theme.primary }]} /><Text style={styles.themeChoiceText}>{theme.name}</Text></Pressable>)}</View>}
               <Pressable onPress={() => { setMenuOpen(false); exportEntries(); }} style={styles.menuItem}><Text style={styles.menuItemText}>Export my entries</Text><Text style={styles.menuItemArrow}>›</Text></Pressable>
@@ -699,7 +875,7 @@ export default function App() {
             </View>
 
             {recentEntries.length ? recentEntries.map((entry) => {
-              return <SwipeableEntryCard entry={entry} key={entry.id} onDelete={() => deleteEntry(entry)} onEdit={() => editEntry(entry)} />;
+              return <SwipeableEntryCard entry={entry} key={entry.id} mood={entry.mood ? moodByValue[entry.mood] : undefined} onDelete={() => deleteEntry(entry)} onEdit={() => editEntry(entry)} />;
             }) : <View style={styles.recentEmpty}><Text style={styles.recentEmptyTitle}>Nothing here yet</Text><Text style={styles.recentEmptyText}>Tap the + button below whenever you want a quiet space to check in.</Text></View>}
           </ScrollView>
 
@@ -857,5 +1033,7 @@ const styles = StyleSheet.create({
   controlsCard: { backgroundColor: '#FFFFFF', borderColor: '#D8E3EF', borderRadius: 16, borderWidth: 1, marginTop: 27, padding: 17 }, controlsTitle: { color: '#294A82', fontSize: 16, fontWeight: '700' }, controlsText: { color: '#647B9E', fontSize: 13, lineHeight: 19, marginTop: 5 }, controlButtons: { flexDirection: 'row', gap: 10, marginTop: 15 }, secondaryButton: { alignItems: 'center', backgroundColor: '#D9E9FF', borderRadius: 10, flex: 1, paddingVertical: 11 }, secondaryButtonText: { color: '#31599C', fontSize: 13, fontWeight: '700' }, deleteButton: { alignItems: 'center', backgroundColor: '#FFF0EE', borderRadius: 10, flex: 1, paddingVertical: 11 }, deleteButtonText: { color: '#A43E36', fontSize: 13, fontWeight: '700' }, deleteAllText: { color: '#A43E36', fontSize: 13, fontWeight: '700', marginTop: 17, textAlign: 'center' },
   calendarEntryDetails: { color: '#7186A7', fontSize: 11, fontWeight: '700', marginTop: 4 },
   themeChoices: { borderTopColor: '#E5ECF5', borderTopWidth: 1, paddingHorizontal: 12, paddingVertical: 8 }, themeChoice: { alignItems: 'center', borderColor: 'transparent', borderRadius: 10, borderWidth: 1, flexDirection: 'row', marginVertical: 3, paddingHorizontal: 9, paddingVertical: 8 }, themeSwatch: { borderRadius: 8, height: 16, marginRight: 9, width: 16 }, themeChoiceText: { color: '#405A80', fontSize: 13, fontWeight: '700' },
+  streakHero: { alignItems: 'center', borderRadius: 24, marginBottom: 16, paddingHorizontal: 24, paddingVertical: 27 }, streakEmoji: { fontSize: 33, marginBottom: 3 }, streakNumber: { color: '#FFFFFF', fontSize: 54, fontWeight: '800', letterSpacing: -2 }, streakLabel: { color: '#FFFFFF', fontSize: 17, fontWeight: '800' }, streakMessage: { color: '#E9F2FF', fontSize: 13, lineHeight: 19, marginTop: 10, textAlign: 'center' }, streakStatsRow: { flexDirection: 'row', gap: 12, marginBottom: 16 }, streakStatCard: { alignItems: 'center', backgroundColor: '#FFFFFF', borderColor: '#D8E3EF', borderRadius: 16, borderWidth: 1, flex: 1, paddingVertical: 18 }, streakStatValue: { fontSize: 27, fontWeight: '800' }, streakStatLabel: { color: '#647B9E', fontSize: 12, fontWeight: '700', marginTop: 4 }, streakWeekCard: { backgroundColor: '#FFFFFF', borderColor: '#D8E3EF', borderRadius: 17, borderWidth: 1, padding: 17 }, streakWeekTitle: { color: '#294A82', fontSize: 16, fontWeight: '800' }, streakWeekRow: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 16 }, streakDay: { alignItems: 'center' }, streakDayDot: { alignItems: 'center', borderRadius: 18, height: 36, justifyContent: 'center', width: 36 }, streakDayMark: { fontSize: 16, fontWeight: '800' }, streakDayLabel: { color: '#7186A7', fontSize: 11, fontWeight: '700', marginTop: 7 }, streakWeekHint: { color: '#7186A7', fontSize: 11, lineHeight: 16, marginTop: 16, textAlign: 'center' }, streakGentleCard: { backgroundColor: '#FFF4EE', borderRadius: 16, marginTop: 18, padding: 17 }, streakGentleTitle: { color: '#613D2D', fontSize: 15, fontWeight: '800', marginBottom: 6 }, streakGentleText: { color: '#765D51', fontSize: 13, lineHeight: 19 },
+  moodSettingsNotice: { backgroundColor: '#DDEBFF', borderRadius: 16, marginBottom: 22, padding: 16 }, moodSettingsNoticeTitle: { color: '#294D86', fontSize: 15, fontWeight: '800', marginBottom: 5 }, moodSettingsNoticeText: { color: '#537196', fontSize: 13, lineHeight: 19 }, moodSettingsTitle: { color: '#294A82', fontSize: 18, fontWeight: '800', marginBottom: 10 }, moodSettingsCard: { backgroundColor: '#FFFFFF', borderColor: '#D8E3EF', borderRadius: 15, borderWidth: 1, marginBottom: 12, padding: 13 }, moodSettingsTop: { alignItems: 'center', flexDirection: 'row' }, moodSettingsPreview: { alignItems: 'center', borderRadius: 14, height: 28, justifyContent: 'center', marginRight: 9, width: 28 }, moodNameInput: { borderBottomColor: '#D8E3EF', borderBottomWidth: 1, color: '#294A82', flex: 1, fontSize: 15, fontWeight: '700', paddingBottom: 6, paddingTop: 5 }, moodRemoveButton: { marginLeft: 10, paddingVertical: 8 }, moodRemoveText: { color: '#B94646', fontSize: 11, fontWeight: '800' }, colorChoiceRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginTop: 14 }, colorChoice: { borderColor: '#FFFFFF', borderRadius: 13, borderWidth: 2, height: 26, width: 26 }, colorChoiceSelected: { borderColor: '#294A82', borderWidth: 3, transform: [{ scale: 1.12 }] }, addMoodCard: { backgroundColor: '#FFFFFF', borderColor: '#D8E3EF', borderRadius: 16, borderWidth: 1, marginTop: 10, padding: 16 }, addMoodHint: { color: '#647B9E', fontSize: 13, lineHeight: 19, marginBottom: 12 }, newMoodInput: { backgroundColor: '#F7FBFF', borderColor: '#D8E3EF', borderRadius: 10, borderWidth: 1, color: '#294A82', fontSize: 15, paddingHorizontal: 12, paddingVertical: 11 }, addMoodButton: { alignItems: 'center', borderRadius: 12, marginTop: 18, paddingVertical: 13 }, addMoodButtonText: { color: '#FFFFFF', fontSize: 14, fontWeight: '800' },
   supportCard: { backgroundColor: '#FFF4EE', borderRadius: 16, marginTop: 28, padding: 17 }, supportTitle: { color: '#613D2D', fontSize: 15, fontWeight: '700', marginBottom: 6 }, supportText: { color: '#765D51', fontSize: 13, lineHeight: 19 },
 });
