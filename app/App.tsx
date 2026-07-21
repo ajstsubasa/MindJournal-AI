@@ -135,6 +135,25 @@ const THEME_KEY = 'mindjournal.app-theme.v1';
 const MOODS_KEY = 'mindjournal.moods.v1';
 const APP_AI_BASE_URL = 'https://mindjournal.languidlabs.com';
 const WEEKLY_SUMMARY_FALLBACK_ENDPOINT = `${APP_AI_BASE_URL}/weekly-summary`;
+
+function confirmDialog(title: string, message: string, confirmLabel: string, onConfirm: () => void, destructive = false) {
+  if (Platform.OS === 'web') {
+    if (typeof window !== 'undefined' && window.confirm(`${title}\n\n${message}`)) onConfirm();
+    return;
+  }
+  Alert.alert(title, message, [
+    { text: 'Cancel', style: 'cancel' },
+    { text: confirmLabel, style: destructive ? 'destructive' : 'default', onPress: onConfirm },
+  ]);
+}
+
+function notifyDialog(title: string, message: string) {
+  if (Platform.OS === 'web') {
+    if (typeof window !== 'undefined') window.alert(`${title}\n\n${message}`);
+    return;
+  }
+  Alert.alert(title, message);
+}
 const sleepOptions = [
   { label: 'Good', value: '8' },
   { label: 'Medium', value: '6' },
@@ -450,7 +469,7 @@ export default function App() {
       .then((loaded) => {
         setEntries(loaded);
       })
-      .catch(() => Alert.alert('Could not load entries', 'Your saved entries could not be opened on this device.'))
+      .catch(() => notifyDialog('Could not load entries', 'Your saved entries could not be opened on this device.'))
       .finally(() => setIsLoading(false));
   }, []);
 
@@ -493,11 +512,11 @@ export default function App() {
   function addMood() {
     const label = newMoodLabel.trim();
     if (!label) {
-      Alert.alert('Name this feeling', 'Add a short emotion name before saving it.');
+      notifyDialog('Name this feeling', 'Add a short emotion name before saving it.');
       return;
     }
     if (moods.some((mood) => mood.label.toLowerCase() === label.toLowerCase())) {
-      Alert.alert('Already added', 'Choose a different name for this feeling.');
+      notifyDialog('Already added', 'Choose a different name for this feeling.');
       return;
     }
     const value = Math.max(0, ...moods.map((mood) => mood.value)) + 1;
@@ -508,21 +527,18 @@ export default function App() {
 
   function removeMood(mood: Mood) {
     if (moods.length === 1) {
-      Alert.alert('Keep one feeling', 'Add another feeling before removing this one.');
+      notifyDialog('Keep one feeling', 'Add another feeling before removing this one.');
       return;
     }
     const isUsed = Object.values(entries).flat().some((entry) => entry.mood === mood.value);
     if (isUsed) {
-      Alert.alert('This feeling is in your journal', `Keep “${mood.label}” so existing entries and calendar colors stay accurate. You can rename it or change its color instead.`);
+      notifyDialog('This feeling is in your journal', `Keep “${mood.label}” so existing entries and calendar colors stay accurate. You can rename it or change its color instead.`);
       return;
     }
-    Alert.alert(`Remove “${mood.label}”?`, 'This only removes it from the mood picker.', [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Remove', style: 'destructive', onPress: () => {
-        saveMoodPreferences(moods.filter((item) => item.value !== mood.value));
-        if (selectedMood === mood.value) setSelectedMood(null);
-      } },
-    ]);
+    confirmDialog(`Remove “${mood.label}”?`, 'This only removes it from the mood picker.', 'Remove', () => {
+      saveMoodPreferences(moods.filter((item) => item.value !== mood.value));
+      if (selectedMood === mood.value) setSelectedMood(null);
+    }, true);
   }
 
   function chooseDate(key: string) {
@@ -608,44 +624,44 @@ export default function App() {
   async function chooseJournalPhoto() {
     try {
       if (!imagePicker) {
-        Alert.alert('Photo feature needs an update', 'Run npx expo install expo-image-picker, then restart the app.');
+        notifyDialog('Photo feature needs an update', 'Run npx expo install expo-image-picker, then restart the app.');
         return;
       }
       const permission = await imagePicker.requestMediaLibraryPermissionsAsync();
       if (!permission.granted) {
-        Alert.alert('Photo permission needed', 'Allow photo access to attach a picture to this private journal entry.');
+        notifyDialog('Photo permission needed', 'Allow photo access to attach a picture to this private journal entry.');
         return;
       }
       const result = await imagePicker.launchImageLibraryAsync({ allowsEditing: true, aspect: [4, 3], mediaTypes: ['images'], quality: 0.7 });
       if (!result.canceled) setImageUri(result.assets[0]?.uri ?? null);
     } catch {
-      Alert.alert('Could not open photos', 'Please try again.');
+      notifyDialog('Could not open photos', 'Please try again.');
     }
   }
 
   async function saveSelectedEntry() {
     const trimmed = content.trim();
     if (!selectedMood && !trimmed) {
-      Alert.alert('A gentle start', 'Choose a mood or write a few words before saving.');
+      notifyDialog('A gentle start', 'Choose a mood or write a few words before saving.');
       return;
     }
     if (trimmed.length > MAX_ENTRY_LENGTH) {
-      Alert.alert('Entry is a little long', `For local journal storage, keep each entry under ${MAX_ENTRY_LENGTH} characters.`);
+      notifyDialog('Entry is a little long', `For local journal storage, keep each entry under ${MAX_ENTRY_LENGTH} characters.`);
       return;
     }
     const parsedSleep = sleepHours.trim() ? Number(sleepHours) : null;
     if (parsedSleep !== null && (!Number.isFinite(parsedSleep) || parsedSleep < 0 || parsedSleep > 24)) {
-      Alert.alert('Check sleep hours', 'Enter a number from 0 to 24, such as 7.5.');
+      notifyDialog('Check sleep hours', 'Enter a number from 0 to 24, such as 7.5.');
       return;
     }
 
     const finalDate = entryDateDraft.trim();
     if (!validDateKey(finalDate)) {
-      Alert.alert('Check the date', 'Use a real date in YYYY-MM-DD format, such as 2026-07-18.');
+      notifyDialog('Check the date', 'Use a real date in YYYY-MM-DD format, such as 2026-07-18.');
       return;
     }
     if (finalDate > todayKey) {
-      Alert.alert('Choose today or earlier', 'Journal entries cannot be dated in the future.');
+      notifyDialog('Choose today or earlier', 'Journal entries cannot be dated in the future.');
       return;
     }
     const now = new Date().toISOString();
@@ -674,10 +690,10 @@ export default function App() {
       setEntryDateDraft(finalDate);
       setEditingEntryId(item.id);
       setImageUri(savedImageUri);
-      Alert.alert('Entry saved', usesBrowserStorage ? `Your reflection for ${readableDate(finalDate)} is saved in this browser.` : `Your reflection for ${readableDate(finalDate)} is encrypted on this device.`);
+      notifyDialog('Entry saved', usesBrowserStorage ? `Your reflection for ${readableDate(finalDate)} is saved in this browser.` : `Your reflection for ${readableDate(finalDate)} is encrypted on this device.`);
     } catch {
       if (savedImageUri && savedImageUri !== existingEntry?.imageUri) await removeManagedPhoto(savedImageUri);
-      Alert.alert('Entry was not saved', 'Please try again.');
+      notifyDialog('Entry was not saved', 'Please try again.');
     } finally {
       setIsSaving(false);
     }
@@ -730,26 +746,21 @@ export default function App() {
   }
 
   function deleteEntry(entry: JournalEntry) {
-    Alert.alert('Delete this entry?', 'This will permanently remove the selected entry from this device.', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Delete', style: 'destructive', onPress: async () => {
-          try {
-            await removeEntry(entry.date, entry.id);
-            await removeManagedPhoto(entry.imageUri);
-            setEntries((current) => {
-              const updated = { ...current };
-              const remaining = (updated[entry.date] ?? []).filter((item) => item.id !== entry.id);
-              if (remaining.length) updated[entry.date] = remaining; else delete updated[entry.date];
-              return updated;
-            });
-            if (editingEntryId === entry.id) openNewEntry(entry.date);
-          } catch {
-            Alert.alert('Could not delete entry', 'Please try again.');
-          }
-        },
-      },
-    ]);
+    confirmDialog('Delete this entry?', 'This will permanently remove the selected entry from this device.', 'Delete', async () => {
+      try {
+        await removeEntry(entry.date, entry.id);
+        await removeManagedPhoto(entry.imageUri);
+        setEntries((current) => {
+          const updated = { ...current };
+          const remaining = (updated[entry.date] ?? []).filter((item) => item.id !== entry.id);
+          if (remaining.length) updated[entry.date] = remaining; else delete updated[entry.date];
+          return updated;
+        });
+        if (editingEntryId === entry.id) openNewEntry(entry.date);
+      } catch {
+        notifyDialog('Could not delete entry', 'Please try again.');
+      }
+    }, true);
   }
 
   function deleteSelectedEntry() { if (existingEntry) deleteEntry(existingEntry); }
@@ -757,7 +768,7 @@ export default function App() {
   async function exportEntries() {
     const allEntries = Object.values(entries).flat().sort((a, b) => a.date.localeCompare(b.date));
     if (!allEntries.length) {
-      Alert.alert('Nothing to export', 'Save at least one reflection first.');
+      notifyDialog('Nothing to export', 'Save at least one reflection first.');
       return;
     }
     try {
@@ -768,10 +779,10 @@ export default function App() {
       if (await Sharing.isAvailableAsync()) {
         await Sharing.shareAsync(path, { mimeType: 'application/json', dialogTitle: 'Export Reflect AI entries' });
       } else {
-        Alert.alert('Export created', 'Your device does not support the share sheet, so the private export remains in the app cache.');
+        notifyDialog('Export created', 'Your device does not support the share sheet, so the private export remains in the app cache.');
       }
     } catch {
-      Alert.alert('Could not export entries', 'Please try again.');
+      notifyDialog('Could not export entries', 'Please try again.');
     }
   }
 
@@ -854,13 +865,11 @@ export default function App() {
       return;
     }
     const isSummary = action === 'summarize';
-    Alert.alert(
+    confirmDialog(
       isSummary ? 'Summarize this reflection?' : 'Find relevant concepts?',
       'Your current reflection text will be sent to the Reflect AI server for analysis. This app is not clinical care or a replacement for professional support.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        { text: isSummary ? 'Summarize' : 'Find concepts', onPress: () => runEntryAI(action) },
-      ],
+      isSummary ? 'Summarize' : 'Find concepts',
+      () => runEntryAI(action),
     );
   }
 
@@ -869,13 +878,11 @@ export default function App() {
       setWeeklySummaryError('Save at least one reflection from the past seven days before generating a summary.');
       return;
     }
-    Alert.alert(
+    confirmDialog(
       'Generate weekly AI summary?',
       `${summaryEntries.length} entr${summaryEntries.length === 1 ? 'y' : 'ies'} from the past seven days will be sent to the summary service. The service does not retain them.`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        { text: 'Generate', onPress: generateWeeklySummary },
-      ],
+      'Generate',
+      generateWeeklySummary,
     );
   }
 
@@ -902,50 +909,42 @@ export default function App() {
   }
 
   function loadDemoJournal() {
-    Alert.alert('Load 30-day sample journal?', 'This fictional, clearly labelled journal shows changing low mood, sleep, energy, and gentle recovery. Any older test data will be replaced; your entries will not be changed.', [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Load demo entries', onPress: async () => {
-        try {
-          const demoEntries = buildDemoEntries();
-          const previousDemoEntries = Object.values(entries).flat().filter((entry) => entry.id.startsWith('demo-'));
-          await Promise.all(demoEntries.map((entry) => saveEntry(entry)));
-          await Promise.all(previousDemoEntries.map((entry) => removeEntry(entry.date, entry.id)));
-          setEntries((current) => {
-            const next = Object.fromEntries(Object.entries(current).map(([date, saved]) => [date, saved.filter((entry) => !entry.id.startsWith('demo-'))]).filter(([, saved]) => saved.length));
-            demoEntries.forEach((entry) => { next[entry.date] = [...(next[entry.date] ?? []), entry]; });
-            return next;
-          });
-          setWeeklySummary(null);
-          Alert.alert('Sample journal loaded', 'Thirty fictional entries are ready to explore in Home, Calendar, Trends, and the 7-day AI reflection.');
-        } catch {
-          Alert.alert('Could not load demo entries', 'Please try again.');
-        }
-      } },
-    ]);
+    confirmDialog('Load 30-day sample journal?', 'This fictional, clearly labelled journal shows changing low mood, sleep, energy, and gentle recovery. Any older test data will be replaced; your entries will not be changed.', 'Load demo entries', async () => {
+      try {
+        const demoEntries = buildDemoEntries();
+        const previousDemoEntries = Object.values(entries).flat().filter((entry) => entry.id.startsWith('demo-'));
+        await Promise.all(demoEntries.map((entry) => saveEntry(entry)));
+        await Promise.all(previousDemoEntries.map((entry) => removeEntry(entry.date, entry.id)));
+        setEntries((current) => {
+          const next = Object.fromEntries(Object.entries(current).map(([date, saved]) => [date, saved.filter((entry) => !entry.id.startsWith('demo-'))]).filter(([, saved]) => saved.length));
+          demoEntries.forEach((entry) => { next[entry.date] = [...(next[entry.date] ?? []), entry]; });
+          return next;
+        });
+        setWeeklySummary(null);
+        notifyDialog('Sample journal loaded', 'Thirty fictional entries are ready to explore in Home, Calendar, Trends, and the 7-day AI reflection.');
+      } catch {
+        notifyDialog('Could not load demo entries', 'Please try again.');
+      }
+    });
   }
 
   function deleteAll() {
     if (!Object.keys(entries).length) return;
-    Alert.alert('Delete all entries?', 'This permanently removes every Reflect AI entry from this device. Consider exporting first.', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Delete all', style: 'destructive', onPress: async () => {
-          try {
-            await removeAllEntries();
-            await Promise.all(Object.values(entries).flat().map((entry) => removeManagedPhoto(entry.imageUri)));
-            setEntries({});
-            setContent('');
-            setImageUri(null);
-            setEditingEntryId(null);
-            setSelectedMood(null);
-            setEnergy(null);
-            setSleepHours('');
-          } catch {
-            Alert.alert('Could not delete entries', 'Please try again.');
-          }
-        },
-      },
-    ]);
+    confirmDialog('Delete all entries?', 'This permanently removes every Reflect AI entry from this device. Consider exporting first.', 'Delete all', async () => {
+      try {
+        await removeAllEntries();
+        await Promise.all(Object.values(entries).flat().map((entry) => removeManagedPhoto(entry.imageUri)));
+        setEntries({});
+        setContent('');
+        setImageUri(null);
+        setEditingEntryId(null);
+        setSelectedMood(null);
+        setEnergy(null);
+        setSleepHours('');
+      } catch {
+        notifyDialog('Could not delete entries', 'Please try again.');
+      }
+    }, true);
   }
 
   if (isLoading) {
