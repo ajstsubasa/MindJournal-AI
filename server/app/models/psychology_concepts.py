@@ -1,6 +1,9 @@
 from pydantic import BaseModel, Field
 
-from app.models.psychology_concept import PsychologyConcept
+
+class PsychologyConcept(BaseModel):
+    name: str
+    definition: str
 
 
 class PsychologyConcepts(BaseModel):
