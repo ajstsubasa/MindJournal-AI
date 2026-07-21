@@ -1,6 +1,5 @@
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, HTTPException, Request, status
 
-from app.auth import require_api_key
 from app.models.concepts_request import ConceptsRequest
 from app.models.psychology_concepts import PsychologyConcepts
 from app.models.summarize_request import SummarizeRequest
@@ -18,12 +17,12 @@ weekly_summarizer = WeeklySummarizer()
 weekly_summary_limiter = InMemoryRateLimiter()
 
 
-@router.post("/summarize", response_model=Summary, dependencies=[Depends(require_api_key)])
+@router.post("/summarize", response_model=Summary)
 async def summarize(request: SummarizeRequest) -> Summary:
     return await summarizer.run(request.data, request.instructions)
 
 
-@router.post("/concepts", response_model=PsychologyConcepts, dependencies=[Depends(require_api_key)])
+@router.post("/concepts", response_model=PsychologyConcepts)
 async def concepts(request: ConceptsRequest) -> PsychologyConcepts:
     return await concept_finder.run(request.data)
 

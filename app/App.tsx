@@ -17,17 +17,20 @@ import {
   View,
 } from 'react-native';
 import * as FileSystem from 'expo-file-system/legacy';
-import * as SecureStore from 'expo-secure-store';
 import * as Sharing from 'expo-sharing';
 import { GirlWaving } from './src/GirlWaving';
-import { JournalEntry, loadEntries, removeAllEntries, removeEntry, saveEntry } from './src/storage';
+import { getLocalValue, JournalEntry, loadEntries, removeAllEntries, removeEntry, saveEntry, setLocalValue } from './src/storage';
 
 type Mood = { color: string; label: string; textColor: string; value: number };
-type Screen = 'home' | 'calendar' | 'entry' | 'trends' | 'moods' | 'streak';
+type Screen = 'home' | 'calendar' | 'entry' | 'trends' | 'moods' | 'streak' | 'summary';
 type TrendRange = 'seven' | 'thirty' | 'sixMonths';
 type AppThemeName = 'ocean' | 'forest' | 'rose' | 'midnight';
 type AppTheme = { accent: string; background: string; dark: boolean; name: string; nav: string; primary: string; text: string };
 type WeeklyAISummary = { affirmation: string; gentle_next_steps: string[]; overview: string; patterns: string[]; support_note: string | null };
+type EntryAIAction = 'concepts' | 'summarize';
+type EntryAISummary = { key_points: string[]; summary: string };
+type JournalConcept = { definition: string; name: string };
+type EntryAIConcepts = { concepts: JournalConcept[] };
 
 let speechRecognition: typeof import('expo-speech-recognition') | null = null;
 try {
@@ -130,8 +133,8 @@ const weekDays = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const MAX_ENTRY_LENGTH = 1500;
 const THEME_KEY = 'mindjournal.app-theme.v1';
 const MOODS_KEY = 'mindjournal.moods.v1';
-const WEEKLY_SUMMARY_ENDPOINT = 'https://mindjournal.languidlabs.com/weekly-summary';
-const WEEKLY_SUMMARY_CONFIRMATION = 'generate weekly ai summary';
+const APP_AI_BASE_URL = 'https://mindjournal.languidlabs.com';
+const WEEKLY_SUMMARY_FALLBACK_ENDPOINT = `${APP_AI_BASE_URL}/weekly-summary`;
 const sleepOptions = [
   { label: 'Good', value: '8' },
   { label: 'Medium', value: '6' },
@@ -144,6 +147,41 @@ const appThemes: Record<AppThemeName, AppTheme> = {
   rose: { accent: '#FFD1E2', background: '#FFF1F6', dark: false, name: 'Rose Dawn', nav: '#7A3658', primary: '#B6507A', text: '#733550' },
   midnight: { accent: '#9BCFC2', background: '#182D31', dark: true, name: 'Midnight Grove', nav: '#0D2023', primary: '#5A9990', text: '#E3F0EC' },
 };
+
+// A fictional, non-clinical sample journal. It is bundled locally so judges can load it
+// instantly without an account, network request, or access to a real person's data.
+const demoJournalTemplate = [
+  { content: 'I stayed in bed longer than I meant to. Even getting dressed felt like work, so I kept the day very small.', energy: 2, mood: 'Very Low', sleepHours: 4 },
+  { content: 'Work messages piled up and I could not find a place to start. I answered one email, then took a quiet break.', energy: 3, mood: 'Low', sleepHours: 4 },
+  { content: 'Sleep was broken and I woke up with a heavy feeling. I cancelled a nonessential plan and let that be enough.', energy: 2, mood: 'Low', sleepHours: 2 },
+  { content: 'I skipped a few things I usually enjoy. I did make tea and sit by the window for a few minutes.', energy: 1, mood: 'Very Low', sleepHours: 4 },
+  { content: 'A shower and clean clothes did not change everything, but they made the afternoon feel slightly more manageable.', energy: 3, mood: 'Low', sleepHours: 6 },
+  { content: 'I ate breakfast and went outside for a short walk. The low feeling was still there, but the fresh air helped.', energy: 4, mood: 'Okay', sleepHours: 6 },
+  { content: 'The weekend felt very quiet. I wanted company but did not have the energy to reach out, so I watched a familiar show.', energy: 2, mood: 'Low', sleepHours: 4 },
+  { content: 'Getting through work took more effort than usual. I wrote a short list and finished two small tasks.', energy: 3, mood: 'Low', sleepHours: 6 },
+  { content: 'I felt disconnected from everyone today. I texted my sister a simple hello, which was a small but real step.', energy: 2, mood: 'Very Low', sleepHours: 4 },
+  { content: 'My thoughts kept telling me I was behind. I reminded myself that a slower day is still a day I made it through.', energy: 3, mood: 'Low', sleepHours: 6 },
+  { content: 'Music made the commute easier. I noticed one calm moment at lunch and tried not to rush past it.', energy: 4, mood: 'Okay', sleepHours: 6 },
+  { content: 'I had very little motivation after work, so dinner was simple and I rested without adding more pressure.', energy: 3, mood: 'Low', sleepHours: 4 },
+  { content: 'I woke up tired and avoided messages for most of the day. Later, I replied to one friend and felt less alone.', energy: 2, mood: 'Very Low', sleepHours: 2 },
+  { content: 'The day felt gray, but I kept a counseling appointment and was glad I showed up.', energy: 3, mood: 'Low', sleepHours: 4 },
+  { content: 'I cleaned one corner of my room and made a proper meal. Those small routines gave the day a little shape.', energy: 4, mood: 'Okay', sleepHours: 6 },
+  { content: 'I slept longer and had more patience with myself today. A friend invited me for coffee, and I said yes.', energy: 5, mood: 'Good', sleepHours: 8 },
+  { content: 'I felt low again after comparing myself to others online. Taking a break from my phone helped me settle.', energy: 3, mood: 'Low', sleepHours: 6 },
+  { content: 'Everything felt unusually effortful this morning. I kept my expectations low and focused on the next hour only.', energy: 2, mood: 'Very Low', sleepHours: 4 },
+  { content: 'I finished a work task I had been avoiding. It did not erase the sadness, but I felt a little more capable.', energy: 3, mood: 'Low', sleepHours: 6 },
+  { content: 'A slow walk after dinner helped loosen some tension. I noticed I was breathing more deeply by the time I came home.', energy: 4, mood: 'Okay', sleepHours: 6 },
+  { content: 'I laughed at something a friend said today. It was brief, but it reminded me that lighter moments can still happen.', energy: 5, mood: 'Good', sleepHours: 8 },
+  { content: 'I felt drained by midday and took a nap. I am trying to see rest as support instead of a failure.', energy: 3, mood: 'Low', sleepHours: 6 },
+  { content: 'I wrote down three things that were bothering me and one thing I could control. That made the evening feel clearer.', energy: 4, mood: 'Okay', sleepHours: 6 },
+  { content: 'The morning was hard, but I took a shower, answered a call, and made it through the day without pushing too far.', energy: 3, mood: 'Low', sleepHours: 4 },
+  { content: 'I made plans for the weekend and felt a little more like myself. I want to protect this steadier pace.', energy: 5, mood: 'Good', sleepHours: 8 },
+  { content: 'I still felt a low hum of sadness, but it was not as consuming. Cooking with music on helped.', energy: 4, mood: 'Okay', sleepHours: 6 },
+  { content: 'I was tired and quiet today. Instead of forcing productivity, I completed one task and let myself stop there.', energy: 3, mood: 'Low', sleepHours: 4 },
+  { content: 'I reached out first and had a good conversation. Connection felt easier than it did a few weeks ago.', energy: 4, mood: 'Okay', sleepHours: 6 },
+  { content: 'I woke up with more energy and went outside before work. The day was not perfect, but it felt more hopeful.', energy: 6, mood: 'Good', sleepHours: 8 },
+  { content: 'I am noticing progress in small things: replying sooner, eating regularly, and making room for rest.', energy: 5, mood: 'Good', sleepHours: 8 },
+] as const;
 
 function dateKey(date: Date) {
   const year = date.getFullYear();
@@ -277,10 +315,13 @@ export default function App() {
   const [moods, setMoods] = useState<Mood[]>(defaultMoods);
   const [newMoodLabel, setNewMoodLabel] = useState('');
   const [newMoodColor, setNewMoodColor] = useState(moodColors[6]);
-  const [weeklySummaryCommand, setWeeklySummaryCommand] = useState('');
   const [weeklySummary, setWeeklySummary] = useState<WeeklyAISummary | null>(null);
   const [weeklySummaryError, setWeeklySummaryError] = useState<string | null>(null);
   const [weeklySummaryLoading, setWeeklySummaryLoading] = useState(false);
+  const [entryAISummary, setEntryAISummary] = useState<EntryAISummary | null>(null);
+  const [entryAIConcepts, setEntryAIConcepts] = useState<EntryAIConcepts | null>(null);
+  const [entryAIError, setEntryAIError] = useState<string | null>(null);
+  const [entryAILoading, setEntryAILoading] = useState<EntryAIAction | null>(null);
   const [quickTranscript, setQuickTranscript] = useState('');
   const [quickError, setQuickError] = useState<string | null>(null);
   const [quickListening, setQuickListening] = useState(false);
@@ -293,6 +334,7 @@ export default function App() {
 
   const dayEntries = entries[selectedDate] ?? [];
   const appTheme = appThemes[appThemeName];
+  const usesBrowserStorage = Platform.OS === 'web';
   const moodByValue = useMemo(() => Object.fromEntries(moods.map((mood) => [mood.value, mood])) as Record<number, Mood>, [moods]);
   const moodIndexByValue = useMemo(() => Object.fromEntries(moods.map((mood, index) => [mood.value, index])) as Record<number, number>, [moods]);
   const existingEntry = dayEntries.find((entry) => entry.id === editingEntryId);
@@ -310,7 +352,7 @@ export default function App() {
     () => Object.values(entries).flat().sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)),
     [entries],
   );
-  const weeklyEntries = useMemo(() => {
+  const summaryEntries = useMemo(() => {
     const firstDate = new Date(`${todayKey}T12:00:00`);
     firstDate.setDate(firstDate.getDate() - 6);
     const firstKey = dateKey(firstDate);
@@ -413,13 +455,13 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    SecureStore.getItemAsync(THEME_KEY).then((savedTheme) => {
+    getLocalValue(THEME_KEY).then((savedTheme) => {
       if (savedTheme && savedTheme in appThemes) setAppThemeName(savedTheme as AppThemeName);
     }).catch(() => undefined);
   }, []);
 
   useEffect(() => {
-    SecureStore.getItemAsync(MOODS_KEY).then((storedMoods) => {
+    getLocalValue(MOODS_KEY).then((storedMoods) => {
       if (!storedMoods) return;
       try {
         const parsed = JSON.parse(storedMoods);
@@ -433,12 +475,12 @@ export default function App() {
   function chooseAppTheme(theme: AppThemeName) {
     setAppThemeName(theme);
     setThemesOpen(false);
-    SecureStore.setItemAsync(THEME_KEY, theme).catch(() => undefined);
+    setLocalValue(THEME_KEY, theme).catch(() => undefined);
   }
 
   function saveMoodPreferences(nextMoods: Mood[]) {
     setMoods(nextMoods);
-    SecureStore.setItemAsync(MOODS_KEY, JSON.stringify(nextMoods)).catch(() => undefined);
+    setLocalValue(MOODS_KEY, JSON.stringify(nextMoods)).catch(() => undefined);
   }
 
   function updateMood(value: number, changes: Partial<Pick<Mood, 'color' | 'label'>>) {
@@ -508,6 +550,9 @@ export default function App() {
     setQuickError(null);
     setVoiceToolsOpen(false);
     setDatePickerOpen(false);
+    setEntryAISummary(null);
+    setEntryAIConcepts(null);
+    setEntryAIError(null);
     setScreen('entry');
   }
 
@@ -525,6 +570,9 @@ export default function App() {
     setQuickError(null);
     setVoiceToolsOpen(false);
     setDatePickerOpen(false);
+    setEntryAISummary(null);
+    setEntryAIConcepts(null);
+    setEntryAIError(null);
     setScreen('entry');
   }
 
@@ -582,7 +630,7 @@ export default function App() {
       return;
     }
     if (trimmed.length > MAX_ENTRY_LENGTH) {
-      Alert.alert('Entry is a little long', `For secure device storage, keep each entry under ${MAX_ENTRY_LENGTH} characters.`);
+      Alert.alert('Entry is a little long', `For local journal storage, keep each entry under ${MAX_ENTRY_LENGTH} characters.`);
       return;
     }
     const parsedSleep = sleepHours.trim() ? Number(sleepHours) : null;
@@ -626,7 +674,7 @@ export default function App() {
       setEntryDateDraft(finalDate);
       setEditingEntryId(item.id);
       setImageUri(savedImageUri);
-      Alert.alert('Entry saved', `Your reflection for ${readableDate(finalDate)} is encrypted on this device.`);
+      Alert.alert('Entry saved', usesBrowserStorage ? `Your reflection for ${readableDate(finalDate)} is saved in this browser.` : `Your reflection for ${readableDate(finalDate)} is encrypted on this device.`);
     } catch {
       if (savedImageUri && savedImageUri !== existingEntry?.imageUri) await removeManagedPhoto(savedImageUri);
       Alert.alert('Entry was not saved', 'Please try again.');
@@ -728,24 +776,37 @@ export default function App() {
   }
 
   async function generateWeeklySummary() {
-    if (weeklySummaryCommand.trim().toLowerCase() !== WEEKLY_SUMMARY_CONFIRMATION) return;
-    if (!weeklyEntries.length) {
+    if (!summaryEntries.length) {
       setWeeklySummaryError('Save at least one reflection from the past seven days before generating a summary.');
       return;
     }
     try {
       setWeeklySummaryLoading(true);
       setWeeklySummaryError(null);
-      const response = await fetch(WEEKLY_SUMMARY_ENDPOINT, {
-        body: JSON.stringify({ entries: weeklyEntries, week_ending: todayKey }),
+      const primaryResponse = await fetch(`${APP_AI_BASE_URL}/summarize`, {
+        body: JSON.stringify({
+          data: summaryEntries,
+          instructions: 'Create a concise, warm seven-day journal reflection. Base it only on the supplied entries. In the summary, describe the overall week without diagnosing. In key points, include the most noticeable patterns and up to three gentle, practical next steps. Do not give medical advice.',
+        }),
         headers: { 'Content-Type': 'application/json' },
         method: 'POST',
       });
-      if (!response.ok) {
-        const detail = await response.json().catch(() => null) as { detail?: string } | null;
-        throw new Error(detail?.detail ?? `The summary service returned ${response.status}.`);
+      if (primaryResponse.ok) {
+        const summary = await primaryResponse.json() as EntryAISummary;
+        setWeeklySummary({ affirmation: '', gentle_next_steps: [], overview: summary.summary, patterns: summary.key_points, support_note: null });
+        return;
       }
-      setWeeklySummary(await response.json() as WeeklyAISummary);
+      const fallbackResponse = await fetch(WEEKLY_SUMMARY_FALLBACK_ENDPOINT, {
+        body: JSON.stringify({ entries: summaryEntries, week_ending: todayKey }),
+        headers: { 'Content-Type': 'application/json' },
+        method: 'POST',
+      });
+      if (!fallbackResponse.ok) {
+        const fallbackDetail = await fallbackResponse.json().catch(() => null) as { detail?: string } | null;
+        const primaryDetail = await primaryResponse.json().catch(() => null) as { detail?: string } | null;
+        throw new Error(fallbackDetail?.detail ?? primaryDetail?.detail ?? `The summary service returned ${fallbackResponse.status}.`);
+      }
+      setWeeklySummary(await fallbackResponse.json() as WeeklyAISummary);
     } catch (error) {
       setWeeklySummaryError(error instanceof Error ? error.message : 'The weekly summary could not be generated. Please try again.');
     } finally {
@@ -753,71 +814,111 @@ export default function App() {
     }
   }
 
+  async function runEntryAI(action: EntryAIAction) {
+    const reflection = content.trim();
+    if (!reflection) {
+      setEntryAIError('Write a few words in your reflection before using an AI tool.');
+      return;
+    }
+    try {
+      setEntryAILoading(action);
+      setEntryAIError(null);
+      const response = await fetch(`${APP_AI_BASE_URL}/${action}`, {
+        body: JSON.stringify(action === 'summarize'
+          ? { data: reflection, instructions: 'Give a concise, warm reflection. Do not diagnose or give medical advice.' }
+          : { data: reflection }),
+        headers: { 'Content-Type': 'application/json' },
+        method: 'POST',
+      });
+      if (!response.ok) {
+        const detail = await response.json().catch(() => null) as { detail?: string } | null;
+        throw new Error(detail?.detail ?? `The AI service returned ${response.status}.`);
+      }
+      if (action === 'summarize') {
+        setEntryAISummary(await response.json() as EntryAISummary);
+        setEntryAIConcepts(null);
+      } else {
+        setEntryAIConcepts(await response.json() as EntryAIConcepts);
+        setEntryAISummary(null);
+      }
+    } catch (error) {
+      setEntryAIError(error instanceof Error ? error.message : 'The AI tool could not be reached. Please try again.');
+    } finally {
+      setEntryAILoading(null);
+    }
+  }
+
+  function confirmEntryAI(action: EntryAIAction) {
+    if (!content.trim()) {
+      setEntryAIError('Write a few words in your reflection before using an AI tool.');
+      return;
+    }
+    const isSummary = action === 'summarize';
+    Alert.alert(
+      isSummary ? 'Summarize this reflection?' : 'Find relevant concepts?',
+      'Your current reflection text will be sent to the Reflect AI server for analysis. This app is not clinical care or a replacement for professional support.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: isSummary ? 'Summarize' : 'Find concepts', onPress: () => runEntryAI(action) },
+      ],
+    );
+  }
+
+  function confirmWeeklySummary() {
+    if (!summaryEntries.length) {
+      setWeeklySummaryError('Save at least one reflection from the past seven days before generating a summary.');
+      return;
+    }
+    Alert.alert(
+      'Generate weekly AI summary?',
+      `${summaryEntries.length} entr${summaryEntries.length === 1 ? 'y' : 'ies'} from the past seven days will be sent to the summary service. The service does not retain them.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Generate', onPress: generateWeeklySummary },
+      ],
+    );
+  }
+
   function buildDemoEntries() {
-    const reflections = [
-      'Demo check-in: Took a short walk and felt a little more settled afterward.',
-      'Demo check-in: Work felt busy today, so I paused for a few slow breaths.',
-      'Demo check-in: I reached out to someone I trust and felt supported.',
-      'Demo check-in: I felt tired, but finishing one small task gave me momentum.',
-      'Demo check-in: I noticed a calm moment while listening to music.',
-      'Demo check-in: My thoughts were racing, so I wrote down what I could control.',
-    ];
     const now = new Date();
     const seed = Date.now();
-    return Array.from({ length: 30 }, (_, index): JournalEntry => {
+    return demoJournalTemplate.map((sample, index): JournalEntry => {
       const date = new Date(now);
       date.setDate(date.getDate() - (29 - index));
-      const mood = moods[(index * 3 + 1) % moods.length];
-      const createdAt = new Date(date.getFullYear(), date.getMonth(), date.getDate(), 9 + (index % 8), index % 50).toISOString();
+      const mood = moods.find((item) => item.label.toLowerCase() === sample.mood.toLowerCase()) ?? moods[index % moods.length];
+      const createdAt = new Date(date.getFullYear(), date.getMonth(), date.getDate(), 8 + ((index * 5) % 12), (index * 13) % 60).toISOString();
       return {
-        content: reflections[(index * 5 + 2) % reflections.length],
+        content: `Demo check-in: ${sample.content}`,
         createdAt,
         date: dateKey(date),
-        energy: 3 + ((index * 7) % 7),
+        energy: sample.energy,
         id: `demo-${seed}-${index}`,
         imageUri: null,
-        mood: mood.value,
-        sleepHours: [2, 4, 6, 8][index % 4],
+        mood: mood?.value ?? null,
+        sleepHours: sample.sleepHours,
         updatedAt: createdAt,
       };
     });
   }
 
   function loadDemoJournal() {
-    Alert.alert('Load 30 days of demo entries?', 'This adds clearly labelled sample entries for testing. It will not overwrite your existing journal.', [
+    Alert.alert('Load 30-day sample journal?', 'This fictional, clearly labelled journal shows changing low mood, sleep, energy, and gentle recovery. Any older test data will be replaced; your entries will not be changed.', [
       { text: 'Cancel', style: 'cancel' },
       { text: 'Load demo entries', onPress: async () => {
         try {
           const demoEntries = buildDemoEntries();
+          const previousDemoEntries = Object.values(entries).flat().filter((entry) => entry.id.startsWith('demo-'));
           await Promise.all(demoEntries.map((entry) => saveEntry(entry)));
+          await Promise.all(previousDemoEntries.map((entry) => removeEntry(entry.date, entry.id)));
           setEntries((current) => {
-            const next = { ...current };
+            const next = Object.fromEntries(Object.entries(current).map(([date, saved]) => [date, saved.filter((entry) => !entry.id.startsWith('demo-'))]).filter(([, saved]) => saved.length));
             demoEntries.forEach((entry) => { next[entry.date] = [...(next[entry.date] ?? []), entry]; });
             return next;
           });
           setWeeklySummary(null);
-          setWeeklySummaryCommand('');
-          Alert.alert('Demo journal loaded', 'Thirty sample entries are ready to explore in Trends and Calendar.');
+          Alert.alert('Sample journal loaded', 'Thirty fictional entries are ready to explore in Home, Calendar, Trends, and the 7-day AI reflection.');
         } catch {
           Alert.alert('Could not load demo entries', 'Please try again.');
-        }
-      } },
-    ]);
-  }
-
-  function removeDemoJournal() {
-    const demoEntries = Object.values(entries).flat().filter((entry) => entry.id.startsWith('demo-'));
-    if (!demoEntries.length) return;
-    Alert.alert('Remove demo entries?', 'This removes only the 30 sample entries, not your own journal entries.', [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Remove demo entries', style: 'destructive', onPress: async () => {
-        try {
-          await Promise.all(demoEntries.map((entry) => removeEntry(entry.date, entry.id)));
-          setEntries((current) => Object.fromEntries(Object.entries(current).map(([date, saved]) => [date, saved.filter((entry) => !entry.id.startsWith('demo-'))]).filter(([, saved]) => saved.length)));
-          setWeeklySummary(null);
-          setWeeklySummaryCommand('');
-        } catch {
-          Alert.alert('Could not remove demo entries', 'Please try again.');
         }
       } },
     ]);
@@ -849,6 +950,27 @@ export default function App() {
 
   if (isLoading) {
     return <SafeAreaView style={[styles.safeArea, styles.loading]}><ActivityIndicator color="#3568B7" size="large" /></SafeAreaView>;
+  }
+
+  if (screen === 'summary') {
+    return (
+      <SafeAreaView style={[styles.safeArea, { backgroundColor: appTheme.background }]}>
+        <StatusBar barStyle={appTheme.dark ? 'light-content' : 'dark-content'} />
+        <ScrollView contentContainerStyle={styles.content}>
+          <View style={styles.header}>
+            <View><Text style={[styles.brand, { color: appTheme.text }]}>AI <Text style={[styles.brandAccent, { color: appTheme.primary }]}>reflection</Text></Text><Text style={[styles.date, { color: appTheme.dark ? '#B9D2CB' : appTheme.text }]}>Notice gentle patterns in your recent check-ins.</Text></View>
+            <Pressable accessibilityLabel="Back to home" onPress={() => setScreen('home')} style={[styles.backButton, { backgroundColor: appTheme.accent }]}><Text style={[styles.backButtonText, { color: appTheme.nav }]}>Back</Text></Pressable>
+          </View>
+          <View style={styles.weeklyAiCard}>
+            <Text style={styles.weeklyAiTitle}>Weekly AI reflection</Text>
+            <Text style={styles.weeklyAiText}>Generate a warm reflection from up to {summaryEntries.length} entries from the past seven days. You will see a privacy confirmation before anything is sent. This is not clinical advice.</Text>
+            <Pressable accessibilityRole="button" disabled={weeklySummaryLoading} onPress={confirmWeeklySummary} style={[styles.weeklyAiButton, { backgroundColor: appTheme.primary }, weeklySummaryLoading && styles.disabledButton]}><Text style={styles.weeklyAiButtonText}>{weeklySummaryLoading ? 'Creating your reflection…' : 'Generate weekly AI summary'}</Text></Pressable>
+            {weeklySummaryError && <Text style={styles.weeklyAiError}>{weeklySummaryError}</Text>}
+            {weeklySummary && <View style={styles.weeklyAiResult}><Text style={styles.weeklyAiResultTitle}>Your reflection</Text><Text style={styles.weeklyAiOverview}>{weeklySummary.overview}</Text>{weeklySummary.patterns.length > 0 && <><Text style={styles.weeklyAiSectionTitle}>Patterns noticed</Text>{weeklySummary.patterns.map((pattern, index) => <Text key={`${pattern}-${index}`} style={styles.weeklyAiBullet}>• {pattern}</Text>)}</>}{weeklySummary.gentle_next_steps.length > 0 && <><Text style={styles.weeklyAiSectionTitle}>Gentle next steps</Text>{weeklySummary.gentle_next_steps.map((step, index) => <Text key={`${step}-${index}`} style={styles.weeklyAiBullet}>• {step}</Text>)}</>}{Boolean(weeklySummary.affirmation) && <Text style={styles.weeklyAiAffirmation}>{weeklySummary.affirmation}</Text>}{weeklySummary.support_note && <Text style={styles.weeklyAiSupport}>{weeklySummary.support_note}</Text>}</View>}
+          </View>
+        </ScrollView>
+      </SafeAreaView>
+    );
   }
 
   if (screen === 'streak') {
@@ -923,19 +1045,6 @@ export default function App() {
               return <View key={mood.value} style={styles.breakdownRow}><View style={[styles.breakdownSwatch, { backgroundColor: mood.color }]} /><Text style={styles.breakdownLabel}>{mood.label}</Text><View style={styles.breakdownTrack}><View style={[styles.breakdownFill, { backgroundColor: mood.color, width: `${percentage}%` }]} /></View><Text style={styles.breakdownValue}>{percentage}%</Text></View>;
             })}
           </> : <View style={styles.emptyState}><Text style={styles.emptyStateTitle}>No check-ins in this period</Text><Text style={styles.emptyStateText}>Save a feeling on the calendar to begin seeing your trends.</Text></View>}
-          <View style={styles.weeklyAiCard}>
-            <Text style={styles.weeklyAiTitle}>Weekly AI reflection</Text>
-            <Text style={styles.weeklyAiText}>When you confirm below, up to {weeklyEntries.length} entries from the past seven days are sent to Reflect AI’s summary service. The service does not retain them. This is not clinical advice.</Text>
-            <TextInput accessibilityLabel="Weekly AI summary confirmation" autoCapitalize="none" onChangeText={setWeeklySummaryCommand} placeholder="Type: Generate weekly AI summary" placeholderTextColor="#7186A7" style={styles.weeklyAiInput} value={weeklySummaryCommand} />
-            <Pressable accessibilityRole="button" disabled={weeklySummaryLoading || weeklySummaryCommand.trim().toLowerCase() !== WEEKLY_SUMMARY_CONFIRMATION} onPress={generateWeeklySummary} style={[styles.weeklyAiButton, { backgroundColor: appTheme.primary }, (weeklySummaryLoading || weeklySummaryCommand.trim().toLowerCase() !== WEEKLY_SUMMARY_CONFIRMATION) && styles.disabledButton]}><Text style={styles.weeklyAiButtonText}>{weeklySummaryLoading ? 'Creating your reflection…' : 'Generate weekly AI summary'}</Text></Pressable>
-            {weeklySummaryError && <Text style={styles.weeklyAiError}>{weeklySummaryError}</Text>}
-            {weeklySummary && <View style={styles.weeklyAiResult}><Text style={styles.weeklyAiResultTitle}>Your week in reflection</Text><Text style={styles.weeklyAiOverview}>{weeklySummary.overview}</Text><Text style={styles.weeklyAiSectionTitle}>Patterns noticed</Text>{weeklySummary.patterns.map((pattern, index) => <Text key={`${pattern}-${index}`} style={styles.weeklyAiBullet}>• {pattern}</Text>)}<Text style={styles.weeklyAiSectionTitle}>Gentle next steps</Text>{weeklySummary.gentle_next_steps.map((step, index) => <Text key={`${step}-${index}`} style={styles.weeklyAiBullet}>• {step}</Text>)}<Text style={styles.weeklyAiAffirmation}>{weeklySummary.affirmation}</Text>{weeklySummary.support_note && <Text style={styles.weeklyAiSupport}>{weeklySummary.support_note}</Text>}</View>}
-          </View>
-          <View style={styles.demoJournalCard}>
-            <Text style={styles.demoJournalTitle}>Hackathon demo journal</Text>
-            <Text style={styles.demoJournalText}>Add 30 clearly labelled sample entries to test trends and the weekly AI reflection. Your existing entries are not overwritten.</Text>
-            <View style={styles.demoJournalActions}><Pressable onPress={loadDemoJournal} style={[styles.demoJournalButton, { backgroundColor: appTheme.accent }]}><Text style={[styles.demoJournalButtonText, { color: appTheme.nav }]}>Load 30-day demo</Text></Pressable>{Object.values(entries).flat().some((entry) => entry.id.startsWith('demo-')) && <Pressable onPress={removeDemoJournal} style={styles.demoRemoveButton}><Text style={styles.demoRemoveText}>Remove demo</Text></Pressable>}</View>
-          </View>
         </ScrollView>
       </SafeAreaView>
     );
@@ -987,6 +1096,8 @@ export default function App() {
 
             {menuOpen && <View style={styles.menuPanel}>
               <Pressable onPress={() => { setMenuOpen(false); setScreen('trends'); }} style={styles.menuItem}><Text style={styles.menuItemText}>Mood trends</Text><Text style={styles.menuItemArrow}>›</Text></Pressable>
+              <Pressable onPress={() => { setMenuOpen(false); setScreen('summary'); }} style={styles.menuItem}><Text style={styles.menuItemText}>Generate AI summary</Text><Text style={styles.menuItemArrow}>›</Text></Pressable>
+              <Pressable onPress={() => { setMenuOpen(false); loadDemoJournal(); }} style={styles.menuItem}><Text style={styles.menuItemText}>Load 30-day test data</Text><Text style={styles.menuItemArrow}>›</Text></Pressable>
               <Pressable onPress={() => { setMenuOpen(false); setScreen('streak'); }} style={styles.menuItem}><Text style={styles.menuItemText}>Your streak</Text><Text style={styles.menuItemArrow}>›</Text></Pressable>
               <Pressable onPress={() => { setMenuOpen(false); setScreen('moods'); }} style={styles.menuItem}><Text style={styles.menuItemText}>Feelings & colors</Text><Text style={styles.menuItemArrow}>›</Text></Pressable>
               <Pressable onPress={() => { setThemesOpen((open) => !open); }} style={styles.menuItem}><Text style={styles.menuItemText}>Appearance</Text><Text style={styles.menuItemArrow}>{themesOpen ? '⌃' : '›'}</Text></Pressable>
@@ -997,7 +1108,7 @@ export default function App() {
 
             <View style={[styles.homeWelcomeCard, { backgroundColor: appTheme.primary }]}>
               <Text style={styles.homeWelcomeTitle}>How are you feeling today?</Text>
-              <Text style={styles.homeWelcomeText}>Your entries stay encrypted on this device unless you choose to export them.</Text>
+              <Text style={styles.homeWelcomeText}>{usesBrowserStorage ? 'Your entries stay in this browser unless you choose to export them.' : 'Your entries stay encrypted on this device unless you choose to export them.'}</Text>
               <Pressable onPress={createTodayEntry} style={[styles.homeWelcomeButton, { backgroundColor: appTheme.accent }]}><Text style={[styles.homeWelcomeButtonText, { color: appTheme.nav }]}>Write for today</Text></Pressable>
             </View>
 
@@ -1044,7 +1155,7 @@ export default function App() {
           {screen === 'calendar' && <>
           <View style={styles.notice}>
             <Text style={styles.noticeTitle}>Private by default</Text>
-            <Text style={styles.noticeText}>Entries are encrypted using this device’s secure storage. Exporting is always your choice.</Text>
+            <Text style={styles.noticeText}>{usesBrowserStorage ? 'Entries are stored only in this browser. Browser storage is not encrypted; use the mobile app for encrypted device storage.' : 'Entries are encrypted using this device’s secure storage. Exporting is always your choice.'}</Text>
           </View>
 
           <View style={styles.calendarHeader}>
@@ -1086,7 +1197,7 @@ export default function App() {
           </View>
           <Text style={styles.quickTranscriptLabel}>Voice transcript</Text>
           <TextInput accessibilityLabel="Voice transcript" maxLength={280} multiline onChangeText={setQuickTranscript} placeholder="Your spoken words will appear here..." placeholderTextColor="#8E8A9B" style={styles.quickTranscriptInput} textAlignVertical="top" value={quickTranscript} />
-          <Text style={styles.quickPrivacyText}>Only the text you save is added to your encrypted journal. No audio is retained.</Text>
+          <Text style={styles.quickPrivacyText}>{usesBrowserStorage ? 'Only the text you save is added to this browser. No audio is retained.' : 'Only the text you save is added to your encrypted journal. No audio is retained.'}</Text>
           {quickError && <Text style={styles.quickError}>{quickError}</Text>}
           <Pressable accessibilityRole="button" onPress={addTranscriptToReflection} style={styles.transcriptButton}><Text style={styles.transcriptButtonText}>Add transcript to reflection</Text></Pressable>
           </>}
@@ -1128,6 +1239,18 @@ export default function App() {
           <View style={styles.sleepOptions}>{sleepOptions.map((option) => <Pressable accessibilityLabel={`${option.label} sleep`} key={option.value} onPress={() => setSleepHours(option.value)} style={[styles.sleepOption, sleepHours === option.value && { backgroundColor: appTheme.primary, borderColor: appTheme.primary }]}><Text style={[styles.sleepOptionText, sleepHours === option.value && styles.sleepOptionTextSelected]}>{option.label}</Text></Pressable>)}</View>
           <Pressable accessibilityRole="button" disabled={isSaving} onPress={saveSelectedEntry} style={[styles.saveButton, { backgroundColor: appTheme.primary }, isSaving && styles.disabledButton]}><Text style={styles.saveButtonText}>{isSaving ? 'Saving…' : existingEntry ? 'Update reflection' : 'Save reflection'}</Text></Pressable>
 
+          <View style={styles.privateAiTestCard}>
+            <Text style={styles.privateAiTestTitle}>AI reflection tools</Text>
+            <Text style={styles.privateAiTestText}>Explore a concise reflection or three relevant wellbeing concepts from what you wrote. Results stay only on this screen until you leave it.</Text>
+            <View style={styles.privateAiTestActions}>
+              <Pressable accessibilityRole="button" disabled={entryAILoading !== null} onPress={() => confirmEntryAI('summarize')} style={[styles.privateAiTestButton, { backgroundColor: appTheme.primary }, entryAILoading !== null && styles.disabledButton]}><Text style={styles.privateAiTestButtonText}>{entryAILoading === 'summarize' ? 'Summarizing…' : 'Summarize reflection'}</Text></Pressable>
+              <Pressable accessibilityRole="button" disabled={entryAILoading !== null} onPress={() => confirmEntryAI('concepts')} style={[styles.privateAiTestSecondaryButton, entryAILoading !== null && styles.disabledButton]}><Text style={styles.privateAiTestSecondaryText}>{entryAILoading === 'concepts' ? 'Finding…' : 'Find 3 concepts'}</Text></Pressable>
+            </View>
+            {entryAIError && <Text style={styles.privateAiTestError}>{entryAIError}</Text>}
+            {entryAISummary && <View style={styles.privateAiTestResult}><Text style={styles.privateAiTestResultTitle}>Summary</Text><Text style={styles.privateAiTestResultText}>{entryAISummary.summary}</Text>{entryAISummary.key_points.map((point, index) => <Text key={`${point}-${index}`} style={styles.privateAiTestBullet}>• {point}</Text>)}</View>}
+            {entryAIConcepts && <View style={styles.privateAiTestResult}><Text style={styles.privateAiTestResultTitle}>Relevant concepts</Text>{entryAIConcepts.concepts.map((concept, index) => <View key={`${concept.name}-${index}`} style={styles.privateAiConcept}><Text style={styles.privateAiConceptName}>{concept.name}</Text><Text style={styles.privateAiTestResultText}>{concept.definition}</Text></View>)}</View>}
+          </View>
+
           <View style={styles.controlsCard}>
             <Text style={styles.controlsTitle}>Your data</Text>
             <Text style={styles.controlsText}>Exports are readable files—only share them somewhere you trust.</Text>
@@ -1155,7 +1278,8 @@ const styles = StyleSheet.create({
   title: { color: '#294A82', fontSize: 20, fontWeight: '700', letterSpacing: -0.3 }, subtitle: { color: '#647B9E', fontSize: 14, marginTop: 5 }, calendarHeader: { marginBottom: 13 }, monthControls: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between', marginTop: 12 }, monthButton: { alignItems: 'center', backgroundColor: '#D9E9FF', borderRadius: 15, height: 30, justifyContent: 'center', width: 30 }, monthButtonText: { color: '#31599C', fontSize: 25, lineHeight: 28 }, monthLabel: { color: '#315982', fontSize: 14, fontWeight: '700' }, weekRow: { flexDirection: 'row', marginBottom: 6 }, weekday: { color: '#7186A7', fontSize: 11, fontWeight: '700', textAlign: 'center', width: '14.285%' }, calendarGrid: { flexDirection: 'row', flexWrap: 'wrap', marginBottom: 11 }, dayCell: { alignItems: 'center', borderRadius: 13, height: 42, justifyContent: 'center', marginVertical: 1, width: '14.285%' }, daySelected: { backgroundColor: '#3568B7' }, daySelectedOutline: { borderColor: '#24467C', borderWidth: 2 }, dayFuture: { opacity: 0.3 }, dayNumber: { color: '#405A80', fontSize: 14, fontWeight: '600' }, dayNumberSelected: { color: '#FFFFFF' }, entryDot: { backgroundColor: '#3568B7', borderRadius: 3, bottom: 5, height: 5, position: 'absolute', width: 5 }, selectedDate: { color: '#31599C', fontSize: 13, fontWeight: '700', marginBottom: 25, textAlign: 'center' },
   moodRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 27, marginTop: 15 }, moodButton: { alignItems: 'center', backgroundColor: '#FFFFFF', borderColor: '#D8E3EF', borderRadius: 13, borderWidth: 1, flexDirection: 'row', minHeight: 44, paddingHorizontal: 10, width: '31%' }, moodColor: { borderRadius: 6, height: 12, marginRight: 7, width: 12 }, moodLabel: { color: '#405A80', fontSize: 11, fontWeight: '700', flexShrink: 1 }, energyHeader: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between' }, energyValue: { color: '#3568B7', fontSize: 13, fontWeight: '700' }, energyRow: { flexDirection: 'row', gap: 4, marginBottom: 30, marginTop: 15 }, energyButton: { alignItems: 'center', backgroundColor: '#FFFFFF', borderColor: '#D8E3EF', borderRadius: 8, borderWidth: 1, flex: 1, paddingVertical: 10 }, energyButtonSelected: { backgroundColor: '#3568B7', borderColor: '#3568B7' }, energyButtonText: { color: '#405A80', fontSize: 12, fontWeight: '700' }, energyButtonTextSelected: { color: '#FFFFFF' },
   sleepHeader: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between' }, sleepUnit: { color: '#706C7D', fontSize: 13 }, sleepOptions: { flexDirection: 'row', gap: 7, marginBottom: 28, marginTop: 11 }, sleepOption: { alignItems: 'center', backgroundColor: '#FFFFFF', borderColor: '#D8E3EF', borderRadius: 10, borderWidth: 1, flex: 1, paddingHorizontal: 4, paddingVertical: 11 }, sleepOptionSelected: { backgroundColor: '#3568B7', borderColor: '#3568B7' }, sleepOptionText: { color: '#52667F', fontSize: 11, fontWeight: '800' }, sleepOptionTextSelected: { color: '#FFFFFF' }, trendChart: { flexDirection: 'row', marginBottom: 28 }, trendLabels: { justifyContent: 'space-between', paddingBottom: 23, width: 76 }, trendLabel: { color: '#706C7D', fontSize: 10, height: 28, textAlign: 'right' }, trendPlotScroll: { paddingRight: 3 }, trendPlot: { height: 191, position: 'relative' }, trendGuide: { borderBottomColor: '#DDE8F5', borderBottomWidth: 1, height: 28 }, trendLine: { backgroundColor: '#7AA8D9', height: 2, position: 'absolute' }, trendPoint: { borderColor: '#FFFFFF', borderRadius: 8, borderWidth: 2, height: 16, position: 'absolute', width: 16 }, trendDateRow: { bottom: 0, flexDirection: 'row', left: 0, position: 'absolute', right: 0 }, trendDate: { color: '#706C7D', fontSize: 9, textAlign: 'center', width: 44 }, emptyTrend: { color: '#706C7D', fontSize: 13, fontStyle: 'italic', marginBottom: 28 },
-  trendsTheme: { backgroundColor: '#EFF4FF' }, rangeRow: { flexDirection: 'row', gap: 7, marginBottom: 24 }, rangeButton: { alignItems: 'center', backgroundColor: '#D9E9FF', borderRadius: 11, flex: 1, paddingVertical: 11 }, rangeButtonSelected: { backgroundColor: '#3568B7' }, rangeButtonText: { color: '#31599C', fontSize: 12, fontWeight: '700' }, rangeButtonTextSelected: { color: '#FFFFFF' }, trendSummary: { color: '#647B9E', fontSize: 13, marginBottom: 14 }, breakdownTitle: { color: '#294A82', fontSize: 18, fontWeight: '700', marginBottom: 13 }, breakdownRow: { alignItems: 'center', flexDirection: 'row', marginBottom: 12 }, breakdownSwatch: { borderRadius: 5, height: 10, marginRight: 7, width: 10 }, breakdownLabel: { color: '#405A80', fontSize: 12, width: 72 }, breakdownTrack: { backgroundColor: '#DDE8F5', borderRadius: 5, flex: 1, height: 10, overflow: 'hidden' }, breakdownFill: { borderRadius: 5, height: '100%' }, breakdownValue: { color: '#405A80', fontSize: 12, fontWeight: '700', textAlign: 'right', width: 38 }, emptyState: { backgroundColor: '#DDEBFF', borderRadius: 16, padding: 18 }, emptyStateTitle: { color: '#294D86', fontSize: 16, fontWeight: '700', marginBottom: 5 }, emptyStateText: { color: '#537196', fontSize: 13, lineHeight: 19 }, weeklyAiCard: { backgroundColor: '#FFFFFF', borderColor: '#D8E3EF', borderRadius: 18, borderWidth: 1, marginTop: 26, padding: 17 }, weeklyAiTitle: { color: '#294A82', fontSize: 18, fontWeight: '800' }, weeklyAiText: { color: '#647B9E', fontSize: 13, lineHeight: 19, marginTop: 6 }, weeklyAiInput: { backgroundColor: '#F7FBFF', borderColor: '#D8E3EF', borderRadius: 10, borderWidth: 1, color: '#294A82', fontSize: 14, marginTop: 14, paddingHorizontal: 12, paddingVertical: 11 }, weeklyAiButton: { alignItems: 'center', borderRadius: 11, marginTop: 10, paddingVertical: 13 }, weeklyAiButtonText: { color: '#FFFFFF', fontSize: 14, fontWeight: '800' }, weeklyAiError: { color: '#A43E36', fontSize: 12, lineHeight: 17, marginTop: 10 }, weeklyAiResult: { backgroundColor: '#F7FBFF', borderRadius: 12, marginTop: 16, padding: 14 }, weeklyAiResultTitle: { color: '#294A82', fontSize: 16, fontWeight: '800' }, weeklyAiOverview: { color: '#405A80', fontSize: 14, lineHeight: 20, marginTop: 7 }, weeklyAiSectionTitle: { color: '#31599C', fontSize: 13, fontWeight: '800', marginTop: 13 }, weeklyAiBullet: { color: '#405A80', fontSize: 13, lineHeight: 19, marginTop: 4 }, weeklyAiAffirmation: { color: '#294A82', fontSize: 13, fontStyle: 'italic', lineHeight: 19, marginTop: 14 }, weeklyAiSupport: { color: '#A43E36', fontSize: 13, fontWeight: '700', lineHeight: 19, marginTop: 12 }, demoJournalCard: { backgroundColor: '#FFF8E6', borderRadius: 17, marginTop: 16, padding: 17 }, demoJournalTitle: { color: '#705A22', fontSize: 16, fontWeight: '800' }, demoJournalText: { color: '#756947', fontSize: 13, lineHeight: 19, marginTop: 5 }, demoJournalActions: { alignItems: 'center', flexDirection: 'row', gap: 11, marginTop: 14 }, demoJournalButton: { alignItems: 'center', borderRadius: 10, flex: 1, paddingVertical: 11 }, demoJournalButtonText: { fontSize: 13, fontWeight: '800' }, demoRemoveButton: { alignItems: 'center', backgroundColor: '#FFF0EE', borderRadius: 10, paddingHorizontal: 12, paddingVertical: 11 }, demoRemoveText: { color: '#A43E36', fontSize: 12, fontWeight: '800' },
+  privateAiTestCard: { backgroundColor: '#F4F8FF', borderColor: '#BBD1F0', borderRadius: 16, borderStyle: 'dashed', borderWidth: 1, marginTop: 16, padding: 15 }, privateAiTestTitle: { color: '#294A82', fontSize: 16, fontWeight: '800' }, privateAiTestText: { color: '#526B91', fontSize: 12, lineHeight: 18, marginTop: 5 }, privateAiTestActions: { gap: 9, marginTop: 13 }, privateAiTestButton: { alignItems: 'center', borderRadius: 10, paddingVertical: 12 }, privateAiTestButtonText: { color: '#FFFFFF', fontSize: 13, fontWeight: '800' }, privateAiTestSecondaryButton: { alignItems: 'center', backgroundColor: '#E0ECFC', borderRadius: 10, paddingVertical: 12 }, privateAiTestSecondaryText: { color: '#31599C', fontSize: 13, fontWeight: '800' }, privateAiTestError: { color: '#A43E36', fontSize: 12, lineHeight: 17, marginTop: 10 }, privateAiTestResult: { backgroundColor: '#FFFFFF', borderRadius: 11, marginTop: 13, padding: 12 }, privateAiTestResultTitle: { color: '#294A82', fontSize: 14, fontWeight: '800' }, privateAiTestResultText: { color: '#405A80', fontSize: 13, lineHeight: 19, marginTop: 5 }, privateAiTestBullet: { color: '#405A80', fontSize: 13, lineHeight: 19, marginTop: 4 }, privateAiConcept: { borderTopColor: '#E1EAF7', borderTopWidth: 1, marginTop: 10, paddingTop: 10 }, privateAiConceptName: { color: '#31599C', fontSize: 13, fontWeight: '800' },
+  trendsTheme: { backgroundColor: '#EFF4FF' }, rangeRow: { flexDirection: 'row', gap: 7, marginBottom: 24 }, rangeButton: { alignItems: 'center', backgroundColor: '#D9E9FF', borderRadius: 11, flex: 1, paddingVertical: 11 }, rangeButtonSelected: { backgroundColor: '#3568B7' }, rangeButtonText: { color: '#31599C', fontSize: 12, fontWeight: '700' }, rangeButtonTextSelected: { color: '#FFFFFF' }, trendSummary: { color: '#647B9E', fontSize: 13, marginBottom: 14 }, breakdownTitle: { color: '#294A82', fontSize: 18, fontWeight: '700', marginBottom: 13 }, breakdownRow: { alignItems: 'center', flexDirection: 'row', marginBottom: 12 }, breakdownSwatch: { borderRadius: 5, height: 10, marginRight: 7, width: 10 }, breakdownLabel: { color: '#405A80', fontSize: 12, width: 72 }, breakdownTrack: { backgroundColor: '#DDE8F5', borderRadius: 5, flex: 1, height: 10, overflow: 'hidden' }, breakdownFill: { borderRadius: 5, height: '100%' }, breakdownValue: { color: '#405A80', fontSize: 12, fontWeight: '700', textAlign: 'right', width: 38 }, emptyState: { backgroundColor: '#DDEBFF', borderRadius: 16, padding: 18 }, emptyStateTitle: { color: '#294D86', fontSize: 16, fontWeight: '700', marginBottom: 5 }, emptyStateText: { color: '#537196', fontSize: 13, lineHeight: 19 }, weeklyAiCard: { backgroundColor: '#FFFFFF', borderColor: '#D8E3EF', borderRadius: 18, borderWidth: 1, padding: 17 }, weeklyAiTitle: { color: '#294A82', fontSize: 18, fontWeight: '800' }, weeklyAiText: { color: '#647B9E', fontSize: 13, lineHeight: 19, marginTop: 6 }, weeklyAiButton: { alignItems: 'center', borderRadius: 11, marginTop: 14, paddingVertical: 13 }, weeklyAiButtonText: { color: '#FFFFFF', fontSize: 14, fontWeight: '800' }, weeklyAiError: { color: '#A43E36', fontSize: 12, lineHeight: 17, marginTop: 10 }, weeklyAiResult: { backgroundColor: '#F7FBFF', borderRadius: 12, marginTop: 16, padding: 14 }, weeklyAiResultTitle: { color: '#294A82', fontSize: 16, fontWeight: '800' }, weeklyAiOverview: { color: '#405A80', fontSize: 14, lineHeight: 20, marginTop: 7 }, weeklyAiSectionTitle: { color: '#31599C', fontSize: 13, fontWeight: '800', marginTop: 13 }, weeklyAiBullet: { color: '#405A80', fontSize: 13, lineHeight: 19, marginTop: 4 }, weeklyAiAffirmation: { color: '#294A82', fontSize: 13, fontStyle: 'italic', lineHeight: 19, marginTop: 14 }, weeklyAiSupport: { color: '#A43E36', fontSize: 13, fontWeight: '700', lineHeight: 19, marginTop: 12 }, demoJournalCard: { backgroundColor: '#FFF8E6', borderRadius: 17, marginTop: 16, padding: 17 }, demoJournalTitle: { color: '#705A22', fontSize: 16, fontWeight: '800' }, demoJournalText: { color: '#756947', fontSize: 13, lineHeight: 19, marginTop: 5 }, demoJournalActions: { alignItems: 'center', flexDirection: 'row', gap: 11, marginTop: 14 }, demoJournalButton: { alignItems: 'center', borderRadius: 10, flex: 1, paddingVertical: 11 }, demoJournalButtonText: { fontSize: 13, fontWeight: '800' }, demoRemoveButton: { alignItems: 'center', backgroundColor: '#FFF0EE', borderRadius: 10, paddingHorizontal: 12, paddingVertical: 11 }, demoRemoveText: { color: '#A43E36', fontSize: 12, fontWeight: '800' },
   natureScene: { alignItems: 'center', backgroundColor: '#DCEFE1', borderRadius: 18, height: 230, justifyContent: 'center', marginBottom: 26, overflow: 'hidden', padding: 12 }, natureSceneNight: { backgroundColor: '#DCE7F3' }, natureCaption: { color: '#315C48', fontSize: 15, fontWeight: '700', marginTop: 2, textAlign: 'center' }, natureCaptionNight: { color: '#3D5872' },
   quickEntryButton: { alignItems: 'center', backgroundColor: '#FFFFFF', borderColor: '#DCD6F2', borderRadius: 18, borderWidth: 1, flexDirection: 'row', marginBottom: 16, padding: 15 }, quickEntryIcon: { alignItems: 'center', backgroundColor: '#EEE9FF', borderRadius: 22, height: 44, justifyContent: 'center', marginRight: 12, width: 44 }, quickEntryIconText: { color: '#5C4ABB', fontSize: 25 }, quickEntryCopy: { flex: 1 }, quickEntryTitle: { color: '#39334D', fontSize: 16, fontWeight: '700' }, quickEntryText: { color: '#706C7D', fontSize: 12, lineHeight: 17, marginTop: 3 }, quickEntryArrow: { color: '#6554C5', fontSize: 28, marginLeft: 8 },
   quickEntryHero: { alignItems: 'center', backgroundColor: '#ECE9FA', borderRadius: 20, marginBottom: 24, padding: 24 }, quickEntryHeroTitle: { color: '#39334D', fontSize: 20, fontWeight: '700', textAlign: 'center' }, quickEntryHeroText: { color: '#625D71', fontSize: 13, lineHeight: 19, marginTop: 7, textAlign: 'center' }, microphoneButton: { alignItems: 'center', backgroundColor: '#6554C5', borderRadius: 42, height: 84, justifyContent: 'center', marginTop: 22, width: 84 }, microphoneButtonActive: { backgroundColor: '#D94E4E' }, microphoneIcon: { color: '#FFFFFF', fontSize: 31 }, listeningText: { color: '#514593', fontSize: 13, fontWeight: '700', marginTop: 13 }, quickTranscriptLabel: { color: '#29243B', fontSize: 18, fontWeight: '700', marginBottom: 9 }, quickTranscriptInput: { backgroundColor: '#FFFFFF', borderColor: '#E2DFF0', borderRadius: 16, borderWidth: 1, color: '#29243B', fontSize: 16, lineHeight: 23, minHeight: 150, padding: 16 }, quickPrivacyText: { color: '#706C7D', fontSize: 12, lineHeight: 18, marginTop: 8 }, quickError: { color: '#A43E36', fontSize: 13, lineHeight: 19, marginTop: 12 },

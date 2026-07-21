@@ -1,4 +1,5 @@
 import * as SecureStore from 'expo-secure-store';
+import { Platform } from 'react-native';
 
 export type JournalEntry = {
   content: string;
@@ -18,8 +19,44 @@ type LegacyEntry = Omit<JournalEntry, 'createdAt' | 'id'> & { quickEntries?: Leg
 const INDEX_KEY = 'mindjournal.entry-dates.v1';
 const entryKey = (date: string) => `mindjournal.entry.v1.${date}`;
 
+function browserStorage() {
+  if (Platform.OS !== 'web') return null;
+  try {
+    return globalThis.localStorage;
+  } catch {
+    return null;
+  }
+}
+
+export async function getLocalValue(key: string): Promise<string | null> {
+  const storage = browserStorage();
+  if (storage) return storage.getItem(key);
+  if (Platform.OS === 'web') throw new Error('Browser storage is unavailable.');
+  return SecureStore.getItemAsync(key);
+}
+
+export async function setLocalValue(key: string, value: string): Promise<void> {
+  const storage = browserStorage();
+  if (storage) {
+    storage.setItem(key, value);
+    return;
+  }
+  if (Platform.OS === 'web') throw new Error('Browser storage is unavailable.');
+  await SecureStore.setItemAsync(key, value);
+}
+
+export async function removeLocalValue(key: string): Promise<void> {
+  const storage = browserStorage();
+  if (storage) {
+    storage.removeItem(key);
+    return;
+  }
+  if (Platform.OS === 'web') throw new Error('Browser storage is unavailable.');
+  await SecureStore.deleteItemAsync(key);
+}
+
 async function getDates(): Promise<string[]> {
-  const stored = await SecureStore.getItemAsync(INDEX_KEY);
+  const stored = await getLocalValue(INDEX_KEY);
   if (!stored) return [];
   try {
     const dates = JSON.parse(stored);
@@ -64,7 +101,7 @@ function normalizeEntries(date: string, raw: unknown): JournalEntry[] {
 export async function loadEntries(): Promise<Record<string, JournalEntry[]>> {
   const dates = await getDates();
   const loaded = await Promise.all(dates.map(async (date) => {
-    const raw = await SecureStore.getItemAsync(entryKey(date));
+    const raw = await getLocalValue(entryKey(date));
     if (!raw) return [date, []] as const;
     try { return [date, normalizeEntries(date, JSON.parse(raw))] as const; } catch { return [date, []] as const; }
   }));
@@ -73,34 +110,34 @@ export async function loadEntries(): Promise<Record<string, JournalEntry[]>> {
 
 export async function saveEntry(entry: JournalEntry): Promise<void> {
   const dates = await getDates();
-  const raw = await SecureStore.getItemAsync(entryKey(entry.date));
+  const raw = await getLocalValue(entryKey(entry.date));
   let entries: JournalEntry[] = [];
   if (raw) {
     try { entries = normalizeEntries(entry.date, JSON.parse(raw)); } catch { entries = []; }
   }
   const index = entries.findIndex((item) => item.id === entry.id);
   const updated = index >= 0 ? entries.map((item) => item.id === entry.id ? entry : item) : [...entries, entry];
-  await SecureStore.setItemAsync(entryKey(entry.date), JSON.stringify(updated));
-  if (!dates.includes(entry.date)) await SecureStore.setItemAsync(INDEX_KEY, JSON.stringify([...dates, entry.date].sort()));
+  await setLocalValue(entryKey(entry.date), JSON.stringify(updated));
+  if (!dates.includes(entry.date)) await setLocalValue(INDEX_KEY, JSON.stringify([...dates, entry.date].sort()));
 }
 
 export async function removeEntry(date: string, id: string): Promise<void> {
   const dates = await getDates();
-  const raw = await SecureStore.getItemAsync(entryKey(date));
+  const raw = await getLocalValue(entryKey(date));
   if (!raw) return;
   let entries: JournalEntry[] = [];
   try { entries = normalizeEntries(date, JSON.parse(raw)); } catch { return; }
   const remaining = entries.filter((entry) => entry.id !== id);
   if (remaining.length) {
-    await SecureStore.setItemAsync(entryKey(date), JSON.stringify(remaining));
+    await setLocalValue(entryKey(date), JSON.stringify(remaining));
   } else {
-    await SecureStore.deleteItemAsync(entryKey(date));
-    await SecureStore.setItemAsync(INDEX_KEY, JSON.stringify(dates.filter((savedDate) => savedDate !== date)));
+    await removeLocalValue(entryKey(date));
+    await setLocalValue(INDEX_KEY, JSON.stringify(dates.filter((savedDate) => savedDate !== date)));
   }
 }
 
 export async function removeAllEntries(): Promise<void> {
   const dates = await getDates();
-  await Promise.all(dates.map((date) => SecureStore.deleteItemAsync(entryKey(date))));
-  await SecureStore.deleteItemAsync(INDEX_KEY);
+  await Promise.all(dates.map((date) => removeLocalValue(entryKey(date))));
+  await removeLocalValue(INDEX_KEY);
 }

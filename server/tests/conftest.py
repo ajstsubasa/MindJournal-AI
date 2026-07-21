@@ -27,4 +27,8 @@ def client():
 
 @pytest.fixture
 def unauthenticated_client():
-    return TestClient(main.app)
+    with ExitStack() as stack:
+        stack.enter_context(summarizer.agent.override(model=TestModel()))
+        stack.enter_context(concept_finder.agent.override(model=TestModel()))
+        stack.enter_context(weekly_summarizer.agent.override(model=TestModel()))
+        yield TestClient(main.app)
