@@ -1,1 +1,1 @@
-MODEL = "anthropic:claude-opus-4-8"
+MODEL = "openai:gpt-5-nano"

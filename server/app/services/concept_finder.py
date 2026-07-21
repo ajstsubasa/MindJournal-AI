@@ -17,9 +17,9 @@ SYSTEM_PROMPT = (
 
 class ConceptFinder:
     def __init__(self, model: str = MODEL) -> None:
-        self._agent = Agent(model, output_type=PsychologyConcepts, system_prompt=SYSTEM_PROMPT)
+        self.agent = Agent(model, output_type=PsychologyConcepts, system_prompt=SYSTEM_PROMPT)
 
     async def run(self, data: Any) -> PsychologyConcepts:
         prompt = f"Find 3 relevant psychology concepts for this input:\n\n{to_prompt_text(data)}"
-        result = await self._agent.run(prompt)
+        result = await self.agent.run(prompt)
         return result.output
