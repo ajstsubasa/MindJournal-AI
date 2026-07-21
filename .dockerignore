@@ -1,0 +1,13 @@
+**/node_modules
+**/.venv
+**/__pycache__
+**/.pytest_cache
+**/.expo
+app/dist
+app/android
+app/ios
+server/web
+.git
+**/*.log
+**/.env
+**/.env.local
