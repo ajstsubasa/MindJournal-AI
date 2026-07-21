@@ -1,0 +1,14 @@
+services:
+  mind-journal-server:
+    build: .
+    env_file:
+      - .env
+    expose:
+      - "80"
+    networks:
+      - reverse_proxy_network
+    restart: unless-stopped
+
+networks:
+  reverse_proxy_network:
+    external: true
